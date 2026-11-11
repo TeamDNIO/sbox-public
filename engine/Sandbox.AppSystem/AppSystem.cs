@@ -22,6 +22,15 @@ public class AppSystem
 	[DllImport( "user32.dll", CharSet = CharSet.Unicode )]
 	private static extern int MessageBox( IntPtr hWnd, string text, string caption, uint type );
 
+	[DllImport( "libc.so.6", EntryPoint = "dlopen" )]
+	private static extern IntPtr Dlopen( string fileName, int flags );
+
+	[DllImport( "libc.so.6", EntryPoint = "dlerror" )]
+	private static extern IntPtr Dlerror();
+
+	private const int RTLD_NOW = 0x2;
+	private const int RTLD_GLOBAL = 0x100;
+
 	/// <summary>
 	/// We should check all the system requirements here as early as possible.
 	/// </summary>
@@ -477,6 +486,27 @@ public class AppSystem
 		if ( !NativeLibrary.TryLoad( dllName, out steamApiDll ) )
 		{
 			throw new System.Exception( "Couldn't load bin/win64/steam_api64.dll" );
+		}
+	}
+
+	/// <summary>
+	/// On Linux, Qt pulls in the system FreeType, and on distros where FreeType links the system
+	/// libharfbuzz (Arch and derivatives like CachyOS) that puts a second copy of every hb_* symbol
+	/// in the process. Our libHarfBuzzSharp then calls into the system copy, and mixing allocations
+	/// between the two corrupts the heap, aborting the editor with "free(): invalid pointer" or
+	/// "free(): invalid size" during startup or when a project opens.
+	/// Loading ours into the global symbol scope before anything else means every hb_* lookup,
+	/// FreeType's included, resolves to the same copy.
+	/// </summary>
+	protected void PreloadHarfBuzz()
+	{
+		if ( !OperatingSystem.IsLinux() )
+			return;
+
+		var path = System.IO.Path.Combine( AppContext.BaseDirectory, NetCore.NativeDllPath, "libHarfBuzzSharp.so" );
+		if ( Dlopen( path, RTLD_NOW | RTLD_GLOBAL ) == IntPtr.Zero )
+		{
+			log.Warning( $"Couldn't preload {path}: {Marshal.PtrToStringAnsi( Dlerror() )}" );
 		}
 	}
 }
