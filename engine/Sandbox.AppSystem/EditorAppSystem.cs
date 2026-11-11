@@ -8,6 +8,7 @@ public class EditorAppSystem : AppSystem
 	public override void Init()
 	{
 		LoadSteamDll();
+		PreloadHarfBuzz();
 
 		base.Init();
 

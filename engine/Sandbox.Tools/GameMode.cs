@@ -41,6 +41,7 @@ public static class GameMode
 		_playWindow = widget._widget.winId();
 		NativeEngine.InputSystem.RegisterWindowWithSDL( _playWindow );
 		PlayWindow = NativeEngine.GameWindowNative.FromNativeHandle( _playWindow );
+		Sandbox.Engine.WindowInput.SelectX11Input( PlayWindow, _playWindow );
 		NativeEngine.GameWindowNative.SetRenderTarget( PlayWindow, widget.SwapChain );
 
 		// The play widget is where the game renders, so make it the main window: flip the existing
