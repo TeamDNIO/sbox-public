@@ -1,5 +1,6 @@
 using NativeEngine;
 using Sandbox.Utility;
+using System.Runtime.InteropServices;
 
 namespace Sandbox.Engine;
 
@@ -42,6 +43,59 @@ internal static class WindowInput
 	{
 		InputSystem.SetEditorMainWindow( hwnd );
 		editorWindow = GameWindowNative.FromNativeHandle( hwnd );
+		SelectX11Input( editorWindow, hwnd );
+	}
+
+	[DllImport( "libX11.so.6" )]
+	private static extern int XSelectInput( IntPtr display, nuint window, nint eventMask );
+
+	[DllImport( "libX11.so.6" )]
+	private static extern int XFlush( IntPtr display );
+
+	[DllImport( "libSDL3.so.0" )]
+	[return: MarshalAs( UnmanagedType.U1 )]
+	private static extern bool SDL_SetWindowKeyboardGrab( IntPtr window, [MarshalAs( UnmanagedType.U1 )] bool grabbed );
+
+	/// <summary>
+	/// On X11, SDL asks for a borrowed window's events in a single request that includes the mouse
+	/// button masks. X only lets one client select ButtonPress on a window, and Qt already has, so
+	/// the whole request fails and SDL never sees a key press, mouse move or focus change on the
+	/// editor's windows - no game input in play mode, and no mouse capture. Ask again on SDL's
+	/// connection, without the button masks.
+	/// </summary>
+	internal static void SelectX11Input( IntPtr sdlWindow, IntPtr xWindow )
+	{
+		if ( !OperatingSystem.IsLinux() || sdlWindow == IntPtr.Zero )
+			return;
+
+		var display = Sdl.GetPointerProperty( Sdl.GetWindowProperties( sdlWindow ), "SDL.window.x11.display", IntPtr.Zero );
+		if ( display == IntPtr.Zero )
+			return; // not using SDL's X11 driver
+
+		const nint KeyPressMask = 1 << 0, KeyReleaseMask = 1 << 1, EnterWindowMask = 1 << 4, LeaveWindowMask = 1 << 5,
+			PointerMotionMask = 1 << 6, KeymapStateMask = 1 << 14, ExposureMask = 1 << 15, StructureNotifyMask = 1 << 17,
+			FocusChangeMask = 1 << 21, PropertyChangeMask = 1 << 22;
+
+		XSelectInput( display, (nuint)(nint)xWindow, KeyPressMask | KeyReleaseMask | EnterWindowMask | LeaveWindowMask | PointerMotionMask
+			| KeymapStateMask | ExposureMask | StructureNotifyMask | FocusChangeMask | PropertyChangeMask );
+		XFlush( display );
+	}
+
+	/// <summary>
+	/// Relative mouse mode confines the X pointer to the whole editor window, not the play widget, and
+	/// X delivers key events to the window under the pointer. Mouse look keeps moving it over other Qt
+	/// windows, where presses and releases go to Qt instead of SDL - keys stick down or never register.
+	/// While the mouse is captured, have SDL grab the keyboard too so every key reaches the game. It has
+	/// to be SDL's grab: SDL re-evaluates its grabs on focus changes and would release one made behind
+	/// its back on the same connection.
+	/// </summary>
+	static void GrabKeyboard( bool grab )
+	{
+		if ( !OperatingSystem.IsLinux() || editorWindow == IntPtr.Zero )
+			return;
+
+		if ( !SDL_SetWindowKeyboardGrab( editorWindow, grab ) )
+			Log.Warning( $"Couldn't {(grab ? "grab" : "release")} the keyboard for play mode: {Sdl.GetError()}" );
 	}
 
 	internal static void OnEditorGameFocusChange( IntPtr hwnd, bool value )
@@ -96,6 +150,7 @@ internal static class WindowInput
 		var actual = SdlWindow.SetRelativeMouseMode( window, value );
 		if ( relative == actual ) return;
 		relative = actual;
+		GrabKeyboard( relative );
 		IToolsDll.Current?.SetRelativeMouseOverride( relative );
 	}
 
