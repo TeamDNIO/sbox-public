@@ -545,8 +545,31 @@ public static partial class EditorUtility
 		if ( fullPath == null )
 			return false;
 
+		if ( OperatingSystem.IsLinux() )
+			return PlayRawSoundLinux( fullPath );
+
 		g_pSoundSystem.PlaySoundAtOSLevel( fullPath );
 		return true;
+	}
+
+	static readonly string[] RawSoundPlayers = ["pw-play", "paplay", "aplay"];
+	static int rawSoundPlayer;
+
+	static bool PlayRawSoundLinux( string fullPath )
+	{
+		for ( ; rawSoundPlayer < RawSoundPlayers.Length; rawSoundPlayer++ )
+		{
+			try
+			{
+				using var process = Process.Start( new ProcessStartInfo( RawSoundPlayers[rawSoundPlayer], [fullPath] ) { UseShellExecute = false } );
+				return true;
+			}
+			catch ( System.ComponentModel.Win32Exception )
+			{
+			}
+		}
+
+		return false;
 	}
 
 	/// <summary>
