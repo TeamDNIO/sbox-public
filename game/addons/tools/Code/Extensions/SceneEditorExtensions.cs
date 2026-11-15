@@ -52,6 +52,9 @@ public static class SceneEditorExtensions
 	/// </summary>
 	public static bool LockCursorToCanvas( Widget canvas, int margin = 16 )
 	{
+		if ( IsXwayland && canvas.Cursor != CursorShape.Blank )
+			return false;
+
 		var rect = canvas.LocalRect.Shrink( margin );
 		var pos = canvas.FromScreen( Application.CursorPosition );
 
@@ -66,6 +69,8 @@ public static class SceneEditorExtensions
 
 		return true;
 	}
+
+	static readonly bool IsXwayland = OperatingSystem.IsLinux() && !string.IsNullOrEmpty( Environment.GetEnvironmentVariable( "WAYLAND_DISPLAY" ) );
 
 	private static float RoundToNearest( float value, float step )
 	{
