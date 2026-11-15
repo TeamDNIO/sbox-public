@@ -166,6 +166,7 @@ class CameraToolWindow : WidgetWindow
 	{
 		ContentMargins = 0;
 		Layout = Layout.Column();
+		MouseTracking = true;
 
 		Rebuild();
 	}
@@ -212,8 +213,8 @@ class CameraToolWindow : WidgetWindow
 		headerRow.Add( new IconButton( "close", CloseWindow ) { ToolTip = "Close Preview", FixedHeight = HeaderHeight, FixedWidth = HeaderHeight, Background = Theme.ControlBackground } );
 
 		SceneWidget = new SceneWidget( this );
-		SceneWidget.FixedWidth = 1280 * 0.4f;
-		SceneWidget.FixedHeight = 720 * 0.4f;
+		SceneWidget.FixedWidth = PreviewWidth;
+		SceneWidget.FixedHeight = PreviewWidth * 9f / 16f;
 
 		if ( targetComponent is CameraComponent camera )
 		{
@@ -222,6 +223,82 @@ class CameraToolWindow : WidgetWindow
 
 		Layout.Add( SceneWidget );
 		Layout.Margin = 4;
+	}
+
+	static float PreviewWidth = 1280 * 0.4f;
+
+	const float MinPreviewWidth = 160;
+	const float ResizeBorder = 6;
+
+	Vector2 resizeEdges;
+	Vector2 resizeFrom;
+	Rect resizeStartRect;
+	Vector2 resizeChrome;
+	float resizeStartWidth;
+
+	Vector2 EdgesAt( Vector2 position ) => IsClosed || !SceneWidget.IsValid() ? Vector2.Zero : new Vector2(
+		position.x < ResizeBorder ? -1 : position.x > Width - ResizeBorder ? 1 : 0,
+		position.y < ResizeBorder ? -1 : position.y > Height - ResizeBorder ? 1 : 0 );
+
+	static CursorShape CursorFor( Vector2 edges ) => edges switch
+	{
+		{ x: 0, y: 0 } => CursorShape.None,
+		{ x: 0 } => CursorShape.SizeV,
+		{ y: 0 } => CursorShape.SizeH,
+		_ when edges.x == edges.y => CursorShape.SizeFDiag,
+		_ => CursorShape.SizeBDiag
+	};
+
+	protected override void OnMousePress( MouseEvent e )
+	{
+		var edges = EdgesAt( e.LocalPosition );
+		if ( !e.LeftMouseButton || edges == Vector2.Zero )
+		{
+			base.OnMousePress( e );
+			return;
+		}
+
+		resizeEdges = edges;
+		resizeFrom = e.ScreenPosition;
+		resizeStartRect = new Rect( Position, Size );
+		resizeChrome = Size - SceneWidget.Size;
+		resizeStartWidth = PreviewWidth;
+		Raise();
+	}
+
+	protected override void OnMouseReleased( MouseEvent e )
+	{
+		resizeEdges = Vector2.Zero;
+		base.OnMouseReleased( e );
+	}
+
+	protected override void OnMouseMove( MouseEvent e )
+	{
+		if ( resizeEdges == Vector2.Zero )
+		{
+			if ( e.ButtonState == MouseButtons.None )
+				Cursor = CursorFor( EdgesAt( e.LocalPosition ) );
+
+			base.OnMouseMove( e );
+			return;
+		}
+
+		var delta = e.ScreenPosition - resizeFrom;
+		var byWidth = delta.x * resizeEdges.x;
+		var byHeight = delta.y * resizeEdges.y * 16f / 9f;
+		var grow = MathF.Abs( byWidth ) > MathF.Abs( byHeight ) ? byWidth : byHeight;
+
+		var maxWidth = MathF.Min( Parent.Width - resizeChrome.x, (Parent.Height - resizeChrome.y) * 16f / 9f );
+		PreviewWidth = Math.Clamp( resizeStartWidth + grow, MinPreviewWidth, MathF.Max( maxWidth, MinPreviewWidth ) );
+
+		SceneWidget.FixedWidth = PreviewWidth;
+		SceneWidget.FixedHeight = PreviewWidth * 9f / 16f;
+		AdjustSize();
+
+		var x = resizeEdges.x > 0 ? resizeStartRect.Left : resizeStartRect.Right - Width;
+		var y = resizeEdges.y > 0 ? resizeStartRect.Top : resizeStartRect.Bottom - Height;
+		Position = new Vector2( x, y );
+		ConstrainTo( Parent.LocalRect );
 	}
 
 	private void TogglePinned()
