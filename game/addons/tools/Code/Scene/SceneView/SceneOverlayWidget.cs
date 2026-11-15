@@ -13,10 +13,10 @@ public class SceneOverlayWidget : Widget
 
 		WindowFlags = WindowFlags.FramelessWindowHint | WindowFlags.Tool;
 
-		// Cocoa and X11 won't let clicks through to the viewport underneath without it. On Windows it
-		// would also stop the tool widgets parented in here (EditorTool.AddOverlay) getting any.
-		if ( !OperatingSystem.IsWindows() )
+		if ( OperatingSystem.IsMacOS() )
 			WindowFlags |= WindowFlags.WindowTransparentForInput;
+		else if ( OperatingSystem.IsLinux() )
+			InputRegion = [];
 
 		Active = this;
 
@@ -63,6 +63,27 @@ public class SceneOverlayWidget : Widget
 		}
 
 		lastGeometryHash = geometryHash;
+	}
+
+	int lastInputRegionHash = -1;
+
+	[EditorEvent.Frame]
+	private void UpdateInputRegion()
+	{
+		if ( !OperatingSystem.IsLinux() )
+			return;
+
+		var region = Children.Where( x => x.Visible ).Select( x => new Rect( x.Position, x.Size ) ).ToArray();
+
+		var hash = new HashCode();
+		foreach ( var rect in region )
+			hash.Add( rect );
+
+		if ( lastInputRegionHash == hash.ToHashCode() )
+			return;
+
+		lastInputRegionHash = hash.ToHashCode();
+		InputRegion = region;
 	}
 
 	internal RealTimeSince timeSinceNeededRedraw = 0.0f;

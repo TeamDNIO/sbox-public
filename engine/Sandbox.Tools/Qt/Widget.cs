@@ -709,8 +709,33 @@ namespace Editor
 
 		public WindowFlags WindowFlags
 		{
-			get => _widget.windowFlags();
-			set => _widget.setWindowFlags( value );
+			get => _widget.windowFlags() | (x11TransparentForInput ? WindowFlags.WindowTransparentForInput : default);
+			set
+			{
+				var wasTransparentForInput = x11TransparentForInput;
+				if ( OperatingSystem.IsLinux() )
+				{
+					x11TransparentForInput = value.Contains( WindowFlags.WindowTransparentForInput );
+					value &= ~WindowFlags.WindowTransparentForInput;
+				}
+
+				_widget.setWindowFlags( value );
+
+				if ( x11TransparentForInput || wasTransparentForInput )
+					UpdateX11InputShape();
+			}
+		}
+
+		Rect[] inputRegion;
+
+		public Rect[] InputRegion
+		{
+			get => inputRegion;
+			set
+			{
+				inputRegion = value;
+				UpdateX11InputShape();
+			}
 		}
 
 		internal void SetWindowFlag( WindowFlags f, bool b ) => _widget.setWindowFlags( b ? (_widget.windowFlags() & f) : (_widget.windowFlags() & ~f) );

@@ -473,6 +473,9 @@ namespace Editor
 
 			if ( e == Native.EventType.WinIdChange )
 			{
+				if ( x11TransparentForInput || inputRegion is not null )
+					UpdateX11InputShape();
+
 				OnWinIdChanged();
 			}
 		}
