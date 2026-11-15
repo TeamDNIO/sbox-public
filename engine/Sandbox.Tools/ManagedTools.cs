@@ -104,6 +104,7 @@ internal static class ManagedTools
 		if ( _wasActiveWindow && !isActive )
 		{
 			EditorShortcuts.ReleaseAll();
+			Application.ReleaseKeys();
 		}
 		_wasActiveWindow = isActive;
 
@@ -186,6 +187,8 @@ internal static class ManagedTools
 	{
 		var ev = new KeyEvent( keyEvent );
 		KeyCode key = ev.Key;
+
+		Application.OnKeyEvent( key, press, ev.IsAutoRepeat );
 
 		if ( key == KeyCode.AsciiTilde || key == KeyCode.QuoteLeft )
 		{

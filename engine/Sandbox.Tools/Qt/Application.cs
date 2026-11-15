@@ -125,8 +125,23 @@ public static class Application
 	/// </summary>
 	public static bool IsKeyDown( Editor.KeyCode code )
 	{
-		return CQUtils.IsKeyPressed( (int)code );
+		return CQUtils.IsKeyPressed( (int)code ) || heldKeys.Contains( code );
 	}
+
+	static readonly HashSet<KeyCode> heldKeys = new();
+
+	internal static void OnKeyEvent( KeyCode key, bool press, bool isAutoRepeat )
+	{
+		if ( !OperatingSystem.IsLinux() || isAutoRepeat )
+			return;
+
+		if ( press )
+			heldKeys.Add( key );
+		else
+			heldKeys.Remove( key );
+	}
+
+	internal static void ReleaseKeys() => heldKeys.Clear();
 
 	/// <summary>
 	/// Converts an editor keycode to a string used by the game
