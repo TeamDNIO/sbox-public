@@ -1,4 +1,5 @@
 ﻿using HalfEdgeMesh;
+using System.Runtime.InteropServices;
 
 namespace Editor.MeshEditor;
 
@@ -11,6 +12,11 @@ namespace Editor.MeshEditor;
 [Group( "2" )]
 public sealed partial class EdgeTool( MeshTool tool ) : SelectionTool<MeshEdge>( tool )
 {
+	readonly List<Vector2> _hoverHashPositions = [];
+	MeshEdgeHashMarks _hoverHashMarks;
+	SceneWorld _hoverHashWorld;
+	ToolRenderable _hoverHashRenderable;
+
 	public override void BuildSceneContextMenu( Menu menu, Ray ray, SceneTraceResult? trace )
 	{
 		base.BuildSceneContextMenu( menu, ray, trace );
@@ -62,39 +68,34 @@ public sealed partial class EdgeTool( MeshTool tool ) : SelectionTool<MeshEdge>(
 			}
 		}
 
-		if ( Gizmo.IsHovered && Tool.MoveMode.AllowSceneSelection && !IsLassoSelecting )
+		var canSelect = Gizmo.IsHovered && Tool.MoveMode.AllowSceneSelection && !IsLassoSelecting;
+		UpdateHoverHashMarks( canSelect ? closestEdge : default );
+		if ( canSelect )
 		{
-			SelectEdge();
+			SelectEdge( closestEdge );
 
 			if ( Gizmo.IsDoubleClicked )
 				SelectEdgeLoop();
 		}
 
-		var edges = Selection.OfType<MeshEdge>().ToList();
+		var edges = SelectedMeshElements;
 
-		using ( Gizmo.Scope( "Edge Selection" ) )
-		{
-			Gizmo.Draw.IgnoreDepth = true;
-			Gizmo.Draw.Color = Color.Yellow;
-
-			foreach ( var edge in edges )
-			{
-				Gizmo.Draw.LineThickness = edge.IsOpen ? 2 : 4;
-				var line = edge.Line;
-				var a = edge.Transform.PointToWorld( line.Start );
-				var b = edge.Transform.PointToWorld( line.End );
-				Gizmo.Draw.Line( a, b );
-
-				if ( edge.IsOpen )
-					DrawOpenEdge( edge );
-			}
-		}
+		DrawSelectedElements();
 
 		if ( ShowSelectionBounds )
 			DrawBounds();
 
 		if ( edges.Count == 2 )
 			AngleFromEdges( edges[0], edges[1] );
+	}
+
+	public override void OnDisabled()
+	{
+		_hoverHashRenderable?.Dispose();
+		_hoverHashRenderable = null;
+		_hoverHashMarks = default;
+		_hoverHashWorld = null;
+		base.OnDisabled();
 	}
 
 	private void DrawBounds()
@@ -159,68 +160,9 @@ public sealed partial class EdgeTool( MeshTool tool ) : SelectionTool<MeshEdge>(
 		}
 	}
 
-	private const float OpenEdgeHashLength = 12.0f;
-	private const float OpenEdgeHashSpacing = 20.0f;
-
-	private static float ScreenSize( Vector3 position, float scale )
-	{
-		return scale * Gizmo.Camera.Position.Distance( position ) / 1000.0f;
-	}
-
-	private static void DrawOpenEdge( MeshEdge edge )
-	{
-		var mesh = edge.Component.Mesh;
-		var hFace = mesh.GetHalfEdgeFace( edge.Handle );
-
-		if ( !hFace.IsValid )
-			hFace = mesh.GetHalfEdgeFace( mesh.GetOppositeHalfEdge( edge.Handle ) );
-
-		if ( !hFace.IsValid )
-			return;
-
-		var line = edge.Line;
-		var a = edge.Transform.PointToWorld( line.Start );
-		var b = edge.Transform.PointToWorld( line.End );
-		var length = a.Distance( b );
-
-		if ( length <= 0.0f )
-			return;
-
-		mesh.ComputeFaceNormal( hFace, out var normal );
-		normal = edge.Transform.NormalToWorld( normal );
-
-		var direction = (b - a).Normal;
-		var tangent = normal.Cross( direction );
-
-		if ( tangent.IsNearlyZero( 0.0001f ) )
-			return;
-
-		tangent = tangent.Normal;
-
-		var faceCenter = edge.Transform.PointToWorld( mesh.GetFaceCenter( hFace ) );
-
-		if ( tangent.Dot( faceCenter - (a + b) * 0.5f ) < 0.0f )
-			tangent = -tangent;
-
-		var travelled = 0.0f;
-
-		for ( int i = 0; i < 256; i++ )
-		{
-			var position = Vector3.Lerp( a, b, travelled / length );
-			var hashEnd = position + tangent * ScreenSize( position, OpenEdgeHashLength );
-			Gizmo.Draw.Line( position, hashEnd );
-
-			if ( travelled >= length )
-				break;
-
-			var step = MathF.Min( ScreenSize( position, OpenEdgeHashSpacing ), length * 0.5f );
-			travelled = MathF.Min( travelled + MathF.Max( step, 0.01f ), length );
-		}
-	}
-
 	public override Rotation CalculateSelectionBasis()
 	{
-		if ( GlobalSpace ) return Rotation.Identity;
+		if ( GlobalSpace ) return WorkPlane.Current.Rotation;
 
 		var edge = Selection.OfType<MeshEdge>().FirstOrDefault();
 		if ( edge.IsValid() )
@@ -407,21 +349,41 @@ public sealed partial class EdgeTool( MeshTool tool ) : SelectionTool<MeshEdge>(
 		return null;
 	}
 
-	private void SelectEdge()
+	private void UpdateHoverHashMarks( MeshEdge edge )
 	{
-		var edge = MeshTrace.GetClosestEdge( 8 );
+		MeshEdgeHashMarks.TryCreate( edge, out var marks );
+		var world = Gizmo.World;
+		if ( marks != default )
+			_hoverHashWorld = world;
+		else if ( _hoverHashWorld != world )
+		{
+			_hoverHashRenderable?.Update( world );
+			return;
+		}
+
+		if ( _hoverHashMarks != marks )
+		{
+			_hoverHashMarks = marks;
+			_hoverHashRenderable?.MarkDirty();
+		}
+		if ( marks != default )
+			_hoverHashRenderable ??= new ToolRenderable( RenderHoverHashMarks ) { ViewDependent = true };
+		_hoverHashRenderable?.Update( world, marks != default ? new ToolRenderView( Gizmo.Camera ) : default );
+	}
+
+	private void RenderHoverHashMarks( ToolRenderContext context )
+	{
+		_hoverHashPositions.Clear();
+		_hoverHashMarks.AddPositions( context.View, _hoverHashPositions );
+		context.Color = Color.Green;
+		context.RenderOrder = 20;
+		context.DrawScreenLines( CollectionsMarshal.AsSpan( _hoverHashPositions ) );
+	}
+
+	private void SelectEdge( MeshEdge edge )
+	{
 		if ( edge.IsValid() )
 		{
-			using ( Gizmo.Scope( "Edge Hover" ) )
-			{
-				Gizmo.Draw.IgnoreDepth = true;
-				Gizmo.Draw.Color = Color.Green;
-				Gizmo.Draw.LineThickness = edge.IsOpen ? 2 : 4;
-
-				if ( edge.IsOpen )
-					DrawOpenEdge( edge );
-			}
-
 			using ( Gizmo.ObjectScope( edge.Component.GameObject, edge.Transform ) )
 			{
 				using ( Gizmo.Scope( "Edge Hover" ) )

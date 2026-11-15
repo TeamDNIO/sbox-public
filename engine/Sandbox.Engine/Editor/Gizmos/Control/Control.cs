@@ -41,7 +41,7 @@ public static partial class Gizmo
 			using var scaler = PushFixedScale();
 
 			// I don't know if we should even be doing this here or leave it to the implementation
-			if ( Settings.GlobalSpace )
+			if ( Settings.GlobalSpace && axisRotation is null )
 				Transform = Transform.WithRotation( Rotation.Identity );
 
 			Sandbox.Gizmo.Draw.IgnoreDepth = true;
@@ -384,7 +384,10 @@ public static partial class Gizmo
 
 			if ( Camera.Ortho )
 			{
-				scale *= Camera.OrthoHeight * 0.006f;
+				var dpiScale = Camera.Attributes.GetFloat( "EditorGizmoDpiScale" );
+				scale *= Camera.OrthoHeight * (dpiScale > 0
+					? 6.0f * dpiScale / MathF.Max( Camera.Size.y, 1.0f )
+					: 0.006f);
 			}
 			else
 			{

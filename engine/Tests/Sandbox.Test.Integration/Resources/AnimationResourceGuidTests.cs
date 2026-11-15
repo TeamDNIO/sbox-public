@@ -167,6 +167,72 @@ public class AnimationResourceGuidTests
 		Assert.AreEqual( 7f, clip.GetLocalTransform( .5f, 0 ).Position.x );
 	}
 
+	[DataTestMethod]
+	[DataRow( true, false, 0f, false )]
+	[DataRow( true, false, 0.5f, false )]
+	[DataRow( true, false, 1f, false )]
+	[DataRow( true, false, 1f, true )]
+	[DataRow( true, true, 1f, false )]
+	[DataRow( false, false, 1f, false )]
+	[DataRow( false, true, 1f, false )]
+	public void LayeredClipPlaybackDoesNotAdvanceSharedInputsTwice( bool shared, bool synchronized, float weight, bool blendedBase )
+	{
+		var skeletonPath = AssetPath( "layer.skel" );
+		WriteResource( skeletonPath, Guid.NewGuid(), CompileData( SkeletonData() ) );
+		var clipPath = AssetPath( "layer.anim" );
+		WriteResource( clipPath, Guid.NewGuid(), CompileData( ClipData( JsonValue.Create( skeletonPath ) ) ) );
+		var clip = Keep( Clip.Load( clipPath ) );
+		Keep( clip.Skeleton );
+		var builder = Graph.Builder;
+		builder.Skeleton = skeletonPath;
+		var baseClip = builder.Clip( clip );
+		var layerClip = shared ? baseClip : builder.Clip( clip, new() { Speed = 2f } );
+		var basePose = blendedBase ? builder.Blend( baseClip, builder.Clip( clip ), 0.5f ) : baseClip;
+		var settings = new GraphBuilder.LayerSettings
+		{
+			Weight = builder.Constant( weight ),
+			Synchronized = synchronized
+		};
+		using var graph = builder.Create( builder.Layers( basePose ).AddLayer( layerClip, settings ).AddLayer( layerClip, settings ) );
+		var reference = Graph.Builder;
+		reference.Skeleton = skeletonPath;
+		var referenceClip = reference.Clip( clip );
+		var referencePose = blendedBase ? reference.Blend( referenceClip, reference.Clip( clip ), 0.5f ) : referenceClip;
+		using var referenceGraph = reference.Create( referencePose );
+		var model = Keep( Model.Builder.AddBone( "root", Vector3.Zero, Rotation.Identity ).Create() );
+		var world = new SceneWorld();
+		try
+		{
+			var actor = new SceneModel( world, model, Transform.Zero ) { UseAnimGraph = true };
+			actor.Animation.Graph = graph;
+			var referenceActor = new SceneModel( world, model, Transform.Zero ) { UseAnimGraph = true };
+			referenceActor.Animation.Graph = referenceGraph;
+			for ( var i = 0; i < 24; ++i )
+			{
+				actor.Update( 0.125f );
+				referenceActor.Update( 0.125f );
+				Assert.IsTrue( actor.Animation.Debug.TryGetNode( baseClip.Index, out var actual ) );
+				Assert.IsTrue( referenceActor.Animation.Debug.TryGetNode( referenceClip.Index, out var expected ) );
+				Assert.IsTrue( actual.IsValid && expected.IsValid );
+				Assert.AreEqual( expected.NormalizedTime, actual.NormalizedTime, 0.0001f, $"Base time at update {i}" );
+				Assert.AreEqual( expected.PreviousNormalizedTime, actual.PreviousNormalizedTime, 0.0001f, $"Previous base time at update {i}" );
+				Assert.IsTrue( actor.Animation.Debug.TryGetNode( layerClip.Index, out var layer ) );
+				if ( shared || synchronized )
+				{
+					Assert.AreEqual( expected.NormalizedTime, layer.NormalizedTime, 0.0001f );
+				}
+				else if ( i == 0 )
+				{
+					Assert.AreEqual( 0.25f, layer.NormalizedTime, 0.0001f, "An independent unsynchronized layer keeps its own speed" );
+				}
+			}
+		}
+		finally
+		{
+			world.Delete();
+		}
+	}
+
 	[TestMethod]
 	public void NamedVariationResolvesTheMovedOwnerInsteadOfLoadingItsDefaultGraph()
 	{
@@ -202,6 +268,54 @@ public class AnimationResourceGuidTests
 			Assert.IsTrue( info.IsValid );
 			Assert.AreEqual( 1f, info.Duration );
 			Assert.IsTrue( actor.Animation.IsTagActive( "guid_named_variation" ) );
+		}
+		finally
+		{
+			world.Delete();
+		}
+	}
+
+	[TestMethod]
+	public void GraphOverTaskLimitFallsBackToReferencePoseAndRecovers()
+	{
+		var skeletonPath = AssetPath( "tasklimit.skel" );
+		WriteResource( skeletonPath, Guid.NewGuid(), CompileData( SkeletonData() ) );
+		var clipPath = AssetPath( "tasklimit.anim" );
+		WriteResource( clipPath, Guid.NewGuid(), CompileData( ClipData( JsonValue.Create( skeletonPath ) ) ) );
+		var builder = Graph.Builder;
+		builder.Skeleton = skeletonPath;
+		var depth = builder.FloatParameter( "depth" );
+		var depth14 = builder.Clip( clipPath );
+		for ( var i = 0; i < 14; i++ )
+			depth14 = builder.Blend( depth14, depth14, .5f );
+		var depth15 = builder.Blend( depth14, depth14, .5f );
+		var root = builder.BlendSpace( depth, looping: false )
+			.Add( 0f, builder.Clip( clipPath ) )
+			.Add( 1f, depth14 )
+			.Add( 2f, depth15 );
+		using var graph = builder.Create( root );
+		var mesh = new Mesh( Material.Load( "materials/default/white.vmat" ) );
+		mesh.CreateVertexBuffer( 3, new Vertex[3].AsSpan() );
+		mesh.CreateIndexBuffer( 3, new[] { 0, 1, 2 } );
+		mesh.Bounds = new BBox( new Vector3( -16 ), new Vector3( 16 ) );
+		var model = Keep( Model.Builder.AddBone( "root", Vector3.Zero, Rotation.Identity ).AddMesh( mesh ).Create() );
+		var world = new SceneWorld();
+		try
+		{
+			var actor = new SceneModel( world, model, Transform.Zero ) { UseAnimGraph = true };
+			actor.Animation.Graph = graph;
+
+			float Evaluate( float value )
+			{
+				Assert.IsTrue( actor.Animation.Parameters.TrySet( "depth", value ) );
+				actor.Update( .016f );
+				return actor.GetParentSpaceBone( 0 ).Position.x;
+			}
+
+			Assert.AreEqual( 7f, Evaluate( 0f ), .001f );
+			Assert.AreEqual( 7f, Evaluate( 1f ), .001f, "Exactly MaxTasks still evaluates" );
+			Assert.AreEqual( 0f, Evaluate( 2f ), .001f, "Over MaxTasks falls back to the reference pose" );
+			Assert.AreEqual( 7f, Evaluate( 0f ), .001f, "Recovers once under the limit" );
 		}
 		finally
 		{

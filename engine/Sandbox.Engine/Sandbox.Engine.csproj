@@ -52,13 +52,14 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<ProjectReference Include="../Mounting/Sandbox.Mounting/Sandbox.Mounting.csproj" />
+		<ProjectReference Include="../Sandbox.Mounting/Sandbox.Mounting.csproj" />
 		<ProjectReference Include="../Sandbox.CodeUpgrader/Sandbox.CodeUpgrader.csproj" />
 		<ProjectReference Include="../Sandbox.Compiling/Sandbox.Compiling.csproj" />
 		<ProjectReference Include="../Sandbox.Event/Sandbox.Event.csproj" />
 		<ProjectReference Include="../Sandbox.Filesystem/Sandbox.Filesystem.csproj" />
 		<ProjectReference Include="../Sandbox.Hotload/Sandbox.Hotload.csproj" />
 		<ProjectReference Include="../Sandbox.Layout/Sandbox.Layout.csproj" />
+		<ProjectReference Include="../Sandbox.Navigation/Sandbox.Navigation.csproj" />
 		<ProjectReference Include="../Sandbox.Reflection/Sandbox.Reflection.csproj" />
 		<ProjectReference Include="../Sandbox.Services/Sandbox.Services.csproj" />
 		<ProjectReference Include="../Sandbox.SolutionGenerator/Sandbox.SolutionGenerator.csproj" />
