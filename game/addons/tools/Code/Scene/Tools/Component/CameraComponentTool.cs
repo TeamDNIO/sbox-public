@@ -25,6 +25,12 @@ public class CameraEditorTool : EditorTool<CameraComponent>
 		window.ToolUpdate();
 		AllowGameObjectSelection = EditorToolManager.CurrentModeName != LookAtModeName;
 
+		if ( pilotViewport is not null && EditorToolManager.CurrentModeName != PilotModeName )
+		{
+			pilotViewport.SourceCamera = null;
+			pilotViewport = null;
+		}
+
 		switch ( EditorToolManager.CurrentModeName )
 		{
 			case LookAtModeName:
@@ -73,10 +79,13 @@ public class CameraEditorTool : EditorTool<CameraComponent>
 		return false;
 	}
 
+	SceneViewportWidget pilotViewport;
+
 	private void ExitCameraToolMode()
 	{
 		EditorToolManager.CurrentModeName = nameof( ObjectEditorTool );
-		SceneViewWidget.Current?.LastSelectedViewportWidget?.SourceCamera = null;
+		pilotViewport?.SourceCamera = null;
+		pilotViewport = null;
 	}
 
 	private void DoCameraLookAt()
@@ -122,7 +131,8 @@ public class CameraEditorTool : EditorTool<CameraComponent>
 	private void DoCameraPilot()
 	{
 		if ( !TryFindSelectedCamera( out var camera ) ) return;
-		if ( SceneViewWidget.Current?.LastSelectedViewportWidget is not { } viewport ) return;
+		pilotViewport ??= SceneViewWidget.Current?.LastSelectedViewportWidget;
+		if ( pilotViewport is not { } viewport || !viewport.IsValid() ) return;
 
 		if ( Application.IsKeyDown( KeyCode.Escape ) )
 		{

@@ -92,7 +92,8 @@ public static class SceneEditorExtensions
 		var cameraVelocity = self.GetValue<Vector3>( "CameraVelocity" );
 
 		bool moved = false;
-		var rightMouse = IsPilotingCamera;
+		var rightMouse = Application.MouseButtons.HasFlag( MouseButtons.Right )
+			|| (EditorToolManager.CurrentModeName == CameraEditorTool.PilotModeName && canvas.Parent is SceneViewportWidget { SourceCamera: not null });
 		var middleMouse = IsDraggingCamera;
 
 		if ( (rightMouse || middleMouse) && self.Input.IsHovered )
