@@ -2,7 +2,6 @@
 using System.Collections.Immutable;
 using System.Linq;
 using Sandbox.Helpers;
-using Sandbox.MovieMaker;
 
 namespace Editor.MovieMaker;
 
@@ -138,10 +137,7 @@ public sealed class SessionHistory : IReadOnlyList<IHistoryItem>, IUndoSystem
 }
 
 internal sealed record SessionProperties(
-	MovieTime? TimeOffset,
-	float? PixelsPerSecond,
 	int FrameRate,
-	MovieTime? PlayheadTime,
 	ImmutableHashSet<Guid>? SelectedTracks );
 
 internal sealed record EditModeSnapshot(
@@ -157,16 +153,11 @@ partial class Session
 
 	internal SessionSnapshot Snapshot()
 	{
-		var timeline = Editor.TimelinePanel?.Timeline;
-
 		return new SessionSnapshot(
 			Project.Snapshot(),
 			EditMode?.Snapshot(),
 			new SessionProperties(
-				timeline?.TimeOffset,
-				timeline?.PixelsPerSecond,
 				FrameRate,
-				PlayheadTime,
 				[..TrackList.SelectedTracks.Select( x => x.Track.Id )] ) );
 	}
 
@@ -179,12 +170,6 @@ partial class Session
 			EditMode?.Restore( data );
 		}
 
-		var timeline = Editor.TimelinePanel?.Timeline;
-
-		timeline?.SetView(
-			snapshot.Properties.TimeOffset ?? timeline.TimeOffset,
-			snapshot.Properties.PixelsPerSecond ?? timeline.PixelsPerSecond );
-
 		FrameRate = snapshot.Properties.FrameRate;
 
 		TrackList.Update();
@@ -196,10 +181,7 @@ partial class Session
 
 		EditMode?.PostRestore();
 
-		if ( snapshot.Properties.PlayheadTime is { } time )
-		{
-			PlayheadTime = time;
-		}
+		ApplyFrame( PreviewTime ?? PlayheadTime );
 
 		return true;
 	}
