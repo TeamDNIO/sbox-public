@@ -115,6 +115,7 @@ public static class GameMode
 		if ( _inPlay is null || _inPlay.IsFocused )
 			return;
 
+		local *= _inPlay.DpiScale;
 		var pos = new Vector2( (int)local.x, (int)local.y );
 		var delta = pos - InputRouter.MouseCursorPosition;
 

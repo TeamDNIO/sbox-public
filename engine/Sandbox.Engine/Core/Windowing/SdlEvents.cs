@@ -82,7 +82,8 @@ internal static class SdlEvents
 				else if ( WindowInput.HasMouseFocus() )
 				{
 					ignoreNextRelativeMouseMove = false;
-					InputRouter.OnMousePositionChange( e.Motion.X, e.Motion.Y, e.Motion.XRel, e.Motion.YRel );
+					var motion = WindowInput.ToFocusWindow( window, e.Motion.X, e.Motion.Y );
+					InputRouter.OnMousePositionChange( motion.x, motion.y, e.Motion.XRel, e.Motion.YRel );
 				}
 				break;
 			case Sdl.EventType.MouseButtonDown:

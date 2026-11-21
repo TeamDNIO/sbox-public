@@ -11,7 +11,7 @@ namespace Sandbox.Engine;
 internal static class WindowInput
 {
 	static bool initialized, active, focused, relative, imeAllowed, noIme;
-	static IntPtr editorWindow, focusWindow;
+	static IntPtr editorWindow, focusWindow, editorNativeWindow, focusNativeWindow;
 	static IntPtr InputWindow => editorWindow != IntPtr.Zero ? editorWindow : GameWindow.Current?.Handle ?? IntPtr.Zero;
 
 	internal static void Initialize()
@@ -19,7 +19,7 @@ internal static class WindowInput
 		if ( Application.IsHeadless ) return;
 		initialized = true;
 		active = focused = relative = false;
-		editorWindow = focusWindow = IntPtr.Zero;
+		editorWindow = focusWindow = editorNativeWindow = focusNativeWindow = IntPtr.Zero;
 		noIme = CommandLine.HasSwitch( "-noime" );
 		imeAllowed = !noIme;
 		Sdl.SetHint( "SDL_TOUCH_MOUSE_EVENTS", "0" );
@@ -43,6 +43,7 @@ internal static class WindowInput
 	{
 		InputSystem.SetEditorMainWindow( hwnd );
 		editorWindow = GameWindowNative.FromNativeHandle( hwnd );
+		editorNativeWindow = hwnd;
 		SelectX11Input( editorWindow, hwnd );
 	}
 
@@ -51,6 +52,27 @@ internal static class WindowInput
 
 	[DllImport( "libX11.so.6" )]
 	private static extern int XFlush( IntPtr display );
+
+	[DllImport( "libX11.so.6" )]
+	private static extern int XTranslateCoordinates( IntPtr display, nuint source, nuint destination, int x, int y, out int destinationX, out int destinationY, out nuint child );
+
+	internal static Vector2 ToFocusWindow( IntPtr window, float x, float y )
+	{
+		if ( !OperatingSystem.IsLinux() || window == IntPtr.Zero || window != editorWindow || focusWindow == IntPtr.Zero
+			|| focusWindow == editorWindow || editorNativeWindow == IntPtr.Zero || focusNativeWindow == IntPtr.Zero )
+			return new Vector2( x, y );
+
+		var display = Sdl.GetPointerProperty( Sdl.GetWindowProperties( window ), "SDL.window.x11.display", IntPtr.Zero );
+		if ( display == IntPtr.Zero )
+			return new Vector2( x, y );
+
+		var ix = (int)MathF.Floor( x );
+		var iy = (int)MathF.Floor( y );
+		if ( XTranslateCoordinates( display, (nuint)(nint)editorNativeWindow, (nuint)(nint)focusNativeWindow, ix, iy, out var tx, out var ty, out _ ) == 0 )
+			return new Vector2( x, y );
+
+		return new Vector2( tx + (x - ix), ty + (y - iy) );
+	}
 
 	[DllImport( "libSDL3.so.0" )]
 	[return: MarshalAs( UnmanagedType.U1 )]
@@ -102,6 +124,7 @@ internal static class WindowInput
 	{
 		if ( !initialized || Application.IsUnitTest ) return;
 		focusWindow = value ? GameWindowNative.FromNativeHandle( hwnd ) : IntPtr.Zero;
+		focusNativeWindow = value ? hwnd : IntPtr.Zero;
 		UpdateApplicationState( forceFocusUpdate: true );
 	}
 
@@ -210,8 +233,8 @@ internal static class WindowInput
 	{
 		if ( !initialized || (window != editorWindow && window != focusWindow) ) return;
 		SetFocus( false );
-		if ( editorWindow == window ) editorWindow = IntPtr.Zero;
-		if ( focusWindow == window ) focusWindow = IntPtr.Zero;
+		if ( editorWindow == window ) { editorWindow = IntPtr.Zero; editorNativeWindow = IntPtr.Zero; }
+		if ( focusWindow == window ) { focusWindow = IntPtr.Zero; focusNativeWindow = IntPtr.Zero; }
 	}
 
 	internal static void Shutdown()
@@ -220,7 +243,7 @@ internal static class WindowInput
 		SetRelativeMouseMode( false );
 		initialized = active = focused = relative = false;
 		InputSystem.SetGameFocus( focused );
-		editorWindow = focusWindow = IntPtr.Zero;
+		editorWindow = focusWindow = editorNativeWindow = focusNativeWindow = IntPtr.Zero;
 		SdlCursors.Shutdown();
 		if ( !Application.IsHeadless ) SdlWindow.WarnIfFailed( Sdl.EnableScreenSaver() );
 	}
