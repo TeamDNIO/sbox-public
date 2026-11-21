@@ -423,7 +423,7 @@ static class StartupLoadProject
 		foreach ( var ident in packagesToDownload )
 		{
 			// normalise into org.ident, without version, so we can easily check below
-			if ( Package.TryParseIdent( ident, out var p ) )
+			if ( Package.TryParseIdentParts( ident, out var p ) )
 				required.Add( Package.FormatIdent( p.org, p.package ) );
 		}
 
@@ -443,6 +443,9 @@ static class StartupLoadProject
 
 	private static void ExportSettings( Project project )
 	{
+		if ( project.Config.Type != "game" )
+			return;
+
 		if ( !FileSystem.ProjectSettings.FileExists( "/Input.config" ) )
 		{
 			if ( !project.Config.TryGetMeta<InputSettings>( "InputSettings", out var meta ) )

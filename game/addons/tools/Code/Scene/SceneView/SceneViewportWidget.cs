@@ -107,7 +107,7 @@ public partial class SceneViewportWidget : Widget
 	{
 		base.OnDoubleClick( e );
 
-		doubleClick = true;
+		doubleClick |= e.LeftMouseButton;
 
 		if ( Application.KeyboardModifiers.HasFlag( KeyboardModifiers.Alt ) )
 		{
@@ -403,6 +403,13 @@ public partial class SceneViewportWidget : Widget
 
 		base.OnMousePress( e );
 
+		if ( e.LeftMouseButton && Renderer.LocalRect.IsInside( Renderer.FromScreen( e.ScreenPosition ) ) )
+		{
+			hasMouseInput = true;
+			mouseWasPressed = true;
+			framesAfterRelease = 0;
+		}
+
 		if ( e.Button == MouseButtons.Right )
 		{
 			initialMousePosition = e.LocalPosition;
@@ -505,10 +512,13 @@ public partial class SceneViewportWidget : Widget
 		{
 			var menu = new ContextMenu( this ) { Searchable = true };
 			bool HasSelection = Session.Selection.OfType<GameObject>().Any();
+			bool CanGroup = Session.Selection.OfType<GameObject>().Any( x => x is not Scene );
 			menu.AddOption( "Cut", "content_cut", EditorScene.Cut, "editor.cut" ).Enabled = HasSelection;
 			menu.AddOption( "Copy", "content_copy", EditorScene.Copy, "editor.copy" ).Enabled = HasSelection;
 			menu.AddOption( "Paste", "content_paste", PasteAtCursor, "editor.paste" );
 			menu.AddOption( "Paste Special", "content_paste_go", EditorScene.PasteSpecial, "editor.paste-special" );
+			menu.AddOption( "Create Group", "file_copy", SceneEditorMenus.Group, "editor.group" ).Enabled = CanGroup;
+			menu.AddOption( "Create Instance", "view_in_ar", SceneEditorMenus.CreateInstance ).Enabled = CanGroup && !Session.IsPrefabSession && !Session.IsPlaying;
 			menu.AddSeparator();
 			menu.AddOption( "Duplicate", "file_copy", SceneEditorMenus.Duplicate, "editor.duplicate" ).Enabled = HasSelection;
 			menu.AddOption( "Delete", "delete", SceneEditorMenus.Delete, "editor.delete" ).Enabled = HasSelection;
@@ -682,8 +692,7 @@ public partial class SceneViewportWidget : Widget
 			_activeCamera.WorldPosition -= _activeCamera.WorldRotation.Forward * MathF.Min( dolly, EditorPreferences.CameraZFar ) * TransitionBlend;
 		}
 
-		if ( GizmoInstance.Input.IsHovered && hasMouseFocus )
-			GizmoInstance.Input.DoubleClick = doubleClick;
+		GizmoInstance.Input.DoubleClick = doubleClick && GizmoInstance.Input.IsHovered && hasMouseFocus;
 
 		doubleClick = false;
 
@@ -834,7 +843,7 @@ public partial class SceneViewportWidget : Widget
 		if ( !Gizmo.Settings.Selection ) return;
 
 		// Trace models in the scene, hover the hit one
-		var tr = session.Scene.Trace.Ray( Gizmo.CurrentRay, Gizmo.RayDepth )
+		var tr = session.Scene.Trace.Ray( Gizmo.Pressed.Any || Gizmo.WasLeftMousePressed ? Gizmo.Pressed.Ray : Gizmo.CurrentRay, Gizmo.RayDepth )
 					.UseRenderMeshes( true )
 					.UsePhysicsWorld( false )
 					.WithoutTags( "hidden" )
@@ -846,6 +855,10 @@ public partial class SceneViewportWidget : Widget
 			{
 				Gizmo.Hitbox.DepthBias = 1;
 				Gizmo.Hitbox.TrySetHovered( tr.Distance );
+
+				// Relinquish object clicks before tools run, including gestures completed between frames.
+				// Transform controls have a different path and retain their capture.
+				if ( Gizmo.Pressed.This && Gizmo.Pressed.CursorDelta.Length > 10 ) BoxSelection.ReleaseObjectClick();
 
 				if ( !Gizmo.IsHovered )
 					return;

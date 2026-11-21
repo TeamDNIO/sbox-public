@@ -70,6 +70,7 @@ internal class ToolsDll : IToolsDll
 	public void Exiting()
 	{
 		EditorEvent.Run( "app.exit" );
+		EditorScene.SaveState();
 		EditorCookie?.Save();
 		ProjectCookie?.Save();
 	}
@@ -183,7 +184,7 @@ internal class ToolsDll : IToolsDll
 
 			EditorTypeLibrary.AddAssembly( assembly.Assembly, true );
 			GameData.AddAssembly( assembly.Assembly );
-			Sandbox.Mounting.Directory.AddAssembly( assembly.Assembly, (assembly.Package as LocalPackage)?.Project?.FileSystem );
+			Sandbox.Mounting.Directory.AddAssembly( assembly.Assembly, (assembly.Package as LocalPackage)?.Project?.FileSystem, exposeMountTypes: !assembly.IsEditorAssembly );
 
 			if ( !StartupLoadProject.IsLoading )
 			{

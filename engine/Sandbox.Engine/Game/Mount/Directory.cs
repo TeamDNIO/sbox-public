@@ -4,16 +4,32 @@ using System.Reflection;
 
 namespace Sandbox.Mounting;
 
-public static class Directory
+public static partial class Directory
 {
 	static MountHost _system;
+
+	/// <summary>
+	/// Mount assemblies whose exposed types are available without a game package dependency.
+	/// <see cref="Game.InitTypeLibrary"/> adds them back on rebuild, including addon mounts loaded by the editor.
+	/// </summary>
+	static readonly List<Assembly> _typeAssemblies = new();
+	static readonly HashSet<Assembly> _standaloneAssemblies = new();
+
+	/// <summary>
+	/// The mount assemblies whose console variables and commands are registered: those with a mount that is mounted.
+	/// </summary>
+	static readonly HashSet<Assembly> _consoleAssemblies = new();
 
 	internal static void LoadSources()
 	{
 		// Create system first.
 		var config = new Configuration();
 		config.SteamIntegration = new SteamIntegration();
+		config.IsDedicatedServer = Application.IsDedicatedServer;
 		_system = new MountHost( config );
+		_system.MountStateChanged = mount => UpdateConsoleMembers( mount.GetType().Assembly );
+
+		LoadConfig();
 
 		if ( !System.IO.Directory.Exists( "mounts/" ) )
 			return;
@@ -99,9 +115,7 @@ public static class Directory
 			return;
 		}
 
-		var assembly = Assembly.Load( result.AssemblyData );
-		AddAssembly( assembly, project.FileSystem );
-		ReflectionUtility.RunAllStaticConstructors( assembly );
+		LoadAssembly( Assembly.Load( result.AssemblyData ), project.FileSystem );
 	}
 
 	/// <summary>
@@ -118,6 +132,14 @@ public static class Directory
 
 			var fullPath = System.IO.Path.GetFullPath( folder );
 			var fileSystem = new LocalFileSystem( fullPath );
+
+			// Before the mounts initialize, so their static constructors can find their own assets
+			var assetsPath = System.IO.Path.Combine( fullPath, "Assets" );
+			if ( System.IO.Directory.Exists( assetsPath ) )
+			{
+				using var scope = GlobalContext.MenuScope();
+				EngineFileSystem.AddAssetPath( $"mnt_{folderName}", assetsPath );
+			}
 
 			foreach ( var dll in assemblies )
 			{
@@ -143,9 +165,7 @@ public static class Directory
 						continue;
 					}
 
-					Assembly assembly = Assembly.Load( bytes );
-					AddAssembly( assembly, fileSystem );
-					ReflectionUtility.RunAllStaticConstructors( assembly );
+					LoadAssembly( Assembly.Load( bytes ), fileSystem );
 				}
 				catch ( System.Exception e )
 				{
@@ -153,12 +173,6 @@ public static class Directory
 				}
 			}
 
-			var assetsPath = System.IO.Path.Combine( fullPath, "Assets" );
-			if ( System.IO.Directory.Exists( assetsPath ) )
-			{
-				using var scope = GlobalContext.MenuScope();
-				EngineFileSystem.AddAssetPath( $"mnt_{folderName}", assetsPath );
-			}
 		}
 	}
 
@@ -196,29 +210,72 @@ public static class Directory
 	}
 
 	/// <summary>
-	/// Get a specific mount by name
+	/// Get a specific mount by ident
 	/// </summary>
-	public static BaseGameMount Get( string name )
+	public static BaseGameMount Get( string ident )
 	{
-		return _system.GetSource( name );
+		return _system.GetSource( ident );
 	}
 
 	/// <summary>
 	/// Mount this game if we can. Returns null if it can't be mounted, or the mount object if it can.
 	/// If we're already mounted, will just return the mount straight away.
 	/// </summary>
-	public static async Task<BaseGameMount> Mount( string name )
+	public static async Task<BaseGameMount> Mount( string ident )
 	{
-		var source = _system.GetSource( name );
+		var source = _system.GetSource( ident );
 		if ( source is null ) return null;
 		if ( source.IsMounted ) return source;
 		if ( source.IsInstalled == false ) return source;
 
-		await SetMountState( name, true );
+		await SetMountState( ident, true );
 
 		if ( !source.IsMounted ) return null;
 
 		return source;
+	}
+
+	[ConCmd( "mount", ConVarFlags.Protected, Help = "Mount a game by ident" )]
+	private static async Task Cmd_Mount( string ident ) => await CmdSetMountState( ident, true );
+
+	[ConCmd( "unmount", ConVarFlags.Protected, Help = "Unmount a game by ident" )]
+	private static async Task Cmd_Unmount( string ident ) => await CmdSetMountState( ident, false );
+
+	private static async Task CmdSetMountState( string ident, bool mount )
+	{
+		var source = _system.GetSource( ident );
+		if ( source is null )
+		{
+			Log.Info( $"Unknown mount '{ident}'" );
+			return;
+		}
+
+		if ( source.IsMounted == mount )
+		{
+			Log.Info( $"{source.Title} is already {(mount ? "mounted" : "unmounted")}!" );
+			return;
+		}
+
+		if ( mount && !source.IsInstalled )
+		{
+			Log.Info( $"{source.Title} is not installed. It must be installed before it can be mounted." );
+			return;
+		}
+
+		await SetMountState( ident, mount );
+
+		if ( !Application.IsEditor )
+		{
+			SaveConfig();
+		}
+
+		if ( source.IsMounted != mount )
+		{
+			Log.Info( $"Failed to {(mount ? "mount" : "unmount")} '{ident}'. See log for details." );
+			return;
+		}
+
+		Log.Info( $"Successfully {(mount ? "mounted" : "unmounted")} {source.Title}" );
 	}
 
 	/// <summary>
@@ -378,14 +435,167 @@ public static class Directory
 		return null;
 	}
 
-	internal static void AddAssembly( Assembly assembly, BaseFileSystem projectFileSystem = null )
+	static void LoadAssembly( Assembly assembly, BaseFileSystem fileSystem )
 	{
+		try
+		{
+			AddTypeAssembly( assembly );
+		}
+		catch ( System.Exception e )
+		{
+			Log.Warning( e, $"Couldn't add the types of mount assembly {assembly.GetName().Name} to the type library, not loading it" );
+			return;
+		}
+
+		try
+		{
+			AddAssembly( assembly, fileSystem );
+		}
+		catch
+		{
+			// Don't keep the types of a mount that failed to register
+			RemoveAssembly( assembly );
+			throw;
+		}
+
+		ReflectionUtility.RunAllStaticConstructors( assembly );
+	}
+
+	internal static void AddAssembly( Assembly assembly, BaseFileSystem projectFileSystem = null, bool exposeMountTypes = false )
+	{
+		// The editor loads global mount addons through its package enroller, but a game with no dependency
+		// on that addon never enrolls it. Its mounted prefabs still need the mount's exposed components.
+		if ( exposeMountTypes && assembly.GetTypes().Any( x => !x.IsAbstract && typeof( BaseGameMount ).IsAssignableFrom( x ) ) )
+			AddTypeAssembly( assembly, registerConsoleMembers: false );
+
 		_system.RegisterTypes( assembly, projectFileSystem );
 	}
 
 	internal static void RemoveAssembly( Assembly assembly )
 	{
 		_system.UnregisterTypes( assembly );
+		RemoveTypeAssembly( assembly );
+	}
+
+	/// <summary>
+	/// Enroll a mount assembly's exposed types in the menu and game type libraries, and keep them there across rebuilds.
+	/// Game code only gets the types the mount marks, such as components and [Library] types, not the rest of the assembly.
+	/// Assemblies loaded by the package system keep their console members managed by their package.
+	/// </summary>
+	internal static void AddTypeAssembly( Assembly assembly, bool registerConsoleMembers = true )
+	{
+		lock ( _typeAssemblies )
+		{
+			if ( _typeAssemblies.Contains( assembly ) ) return;
+			_typeAssemblies.Add( assembly );
+			if ( registerConsoleMembers ) _standaloneAssemblies.Add( assembly );
+		}
+
+		var libraries = ContextLibraries().ToArray();
+
+		try
+		{
+			foreach ( var library in libraries )
+			{
+				library.AddAssembly( assembly, false );
+			}
+		}
+		catch
+		{
+			// Left in the list, it would throw again on every type library rebuild
+			lock ( _typeAssemblies )
+			{
+				_typeAssemblies.Remove( assembly );
+				_standaloneAssemblies.Remove( assembly );
+			}
+
+			foreach ( var library in libraries )
+			{
+				library.RemoveAssembly( assembly );
+			}
+
+			throw;
+		}
+
+		UpdateUpgraders();
+		UpdateConsoleMembers( assembly );
+	}
+
+	internal static void RemoveTypeAssembly( Assembly assembly )
+	{
+		lock ( _typeAssemblies )
+		{
+			if ( !_typeAssemblies.Remove( assembly ) ) return;
+			_standaloneAssemblies.Remove( assembly );
+		}
+
+		foreach ( var library in ContextLibraries() )
+		{
+			library.RemoveAssembly( assembly );
+		}
+
+		UpdateUpgraders();
+		UpdateConsoleMembers( assembly );
+	}
+
+	/// <summary>
+	/// Called by <see cref="Game.InitTypeLibrary"/> so a rebuilt library keeps the mount types.
+	/// </summary>
+	internal static void AddTypesTo( Internal.TypeLibrary library )
+	{
+		Assembly[] assemblies;
+		lock ( _typeAssemblies ) assemblies = _typeAssemblies.ToArray();
+
+		foreach ( var assembly in assemblies )
+		{
+			library.AddAssembly( assembly, false );
+		}
+	}
+
+	/// <summary>
+	/// Console variables and commands declared in a mount assembly exist while at least one mount it defines is
+	/// mounted, and are removed with the last of them or with the assembly. Only for the assemblies loaded here:
+	/// one that came through the package system has its own registered with it.
+	/// </summary>
+	static void UpdateConsoleMembers( Assembly assembly )
+	{
+		if ( !ThreadSafe.IsMainThread )
+		{
+			MainThread.Queue( () => UpdateConsoleMembers( assembly ) );
+			return;
+		}
+
+		bool loadedHere;
+		lock ( _typeAssemblies ) loadedHere = _standaloneAssemblies.Contains( assembly );
+
+		var mounted = loadedHere && _system is not null && _system.All.Any( x => x.IsMounted && x.GetType().Assembly == assembly );
+		if ( mounted == _consoleAssemblies.Contains( assembly ) )
+			return;
+
+		if ( mounted )
+		{
+			_consoleAssemblies.Add( assembly );
+			ConVarSystem.AddAssembly( assembly, "mount" );
+		}
+		else
+		{
+			_consoleAssemblies.Remove( assembly );
+			ConVarSystem.RemoveAssembly( assembly );
+		}
+	}
+
+	// The game's type library holds the upgraders, and nothing else refreshes them until a game assembly loads
+	static void UpdateUpgraders()
+	{
+		if ( GlobalContext.Game?.TypeLibrary is { } library )
+			JsonUpgrader.UpdateUpgraders( library );
+	}
+
+	static IEnumerable<Internal.TypeLibrary> ContextLibraries()
+	{
+		return new[] { GlobalContext.Menu?.TypeLibrary, GlobalContext.Game?.TypeLibrary }
+			.Where( x => x is not null )
+			.Distinct();
 	}
 }
 

@@ -19,11 +19,24 @@ internal class MountHost : IDisposable
 
 	public ISteamIntegration Steam { get; init; }
 
+	public bool IsDedicatedServer { get; init; }
+
+	/// <summary>
+	/// Every mount's settings by ident, including mounts that aren't loaded. Each mount holds on to its own entry.
+	/// </summary>
+	public Dictionary<string, MountSettings> Settings { get; } = new( StringComparer.OrdinalIgnoreCase );
+
 	public IReadOnlyCollection<BaseGameMount> All => Sources.Values;
+
+	/// <summary>
+	/// Called after a mount was mounted or shut down, whichever way it came about.
+	/// </summary>
+	internal Action<BaseGameMount> MountStateChanged;
 
 	public MountHost( Configuration config )
 	{
 		Steam = config.SteamIntegration;
+		IsDedicatedServer = config.IsDedicatedServer;
 	}
 
 	public void Dispose()
@@ -49,6 +62,7 @@ internal class MountHost : IDisposable
 			if ( Sources.ContainsKey( t.Ident ) )
 				throw new System.Exception( "Already exists" );
 
+			t.Config = Settings.GetOrCreate( t.Ident );
 			t.Register( projectFileSystem );
 			t.InitializeInternal( this );
 
@@ -68,17 +82,17 @@ internal class MountHost : IDisposable
 	/// <summary>
 	/// Get an asset source by its ident
 	/// </summary>
-	public BaseGameMount GetSource( string title )
+	public BaseGameMount GetSource( string ident )
 	{
-		return Sources.GetValueOrDefault( title );
+		return Sources.GetValueOrDefault( ident );
 	}
 
 	/// <summary>
 	/// Mount this asset source
 	/// </summary>
-	public async Task Mount( string title )
+	public async Task Mount( string ident )
 	{
-		var source = GetSource( title );
+		var source = GetSource( ident );
 		if ( source is null || source.IsMounted )
 			return;
 
@@ -88,9 +102,9 @@ internal class MountHost : IDisposable
 	/// <summary>
 	/// Mount this asset source
 	/// </summary>
-	public void Unmount( string title )
+	public void Unmount( string ident )
 	{
-		var source = GetSource( title );
+		var source = GetSource( ident );
 		if ( source is null || !source.IsMounted )
 			return;
 
