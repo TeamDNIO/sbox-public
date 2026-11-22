@@ -260,6 +260,15 @@ public static partial class AssetSystem
 		return CloudDirectory.GetPackageFiles( package ).ToList();
 	}
 
+	public static string GetWorkshopFolder( Package package )
+	{
+		if ( package is null || !package.InstallsFromWorkshop )
+			return null;
+
+		var item = Sandbox.Services.Ugc.GetItem( package.WorkshopId );
+		return item is { IsInstalled: true } ? item.InstallFolder : null;
+	}
+
 	/// <summary>
 	/// Is this package type something we can install?
 	/// </summary>
