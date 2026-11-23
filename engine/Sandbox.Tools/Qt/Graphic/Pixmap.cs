@@ -130,7 +130,7 @@ namespace Editor
 			if ( !HasGraphics )
 				return null;
 
-			if ( !filename.Contains( ":" ) ) filename = $"toolimages:{filename}";
+			if ( !filename.Contains( ":" ) && !System.IO.Path.IsPathRooted( filename ) ) filename = $"toolimages:{filename}";
 
 			var ptr = QPixmap.CreateFromFile( filename );
 			if ( ptr.IsNull ) return null;
