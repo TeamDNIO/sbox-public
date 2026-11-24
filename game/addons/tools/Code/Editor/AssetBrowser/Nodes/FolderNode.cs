@@ -111,7 +111,7 @@ partial class FolderNode : TreeNode<LocalAssetBrowser.Location>
 
 		var drag = new Drag( TreeView );
 		drag.Data.Text = Value.Path;
-		drag.Data.Url = new System.Uri( "file:///" + Value.Path );
+		drag.Data.Url = new System.Uri( System.IO.Path.GetFullPath( Value.Path ) );
 
 		drag.Execute();
 

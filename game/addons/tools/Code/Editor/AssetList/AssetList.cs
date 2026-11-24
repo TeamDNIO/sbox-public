@@ -82,7 +82,7 @@ public partial class AssetList : ListView, AssetSystem.IEventListener
 				{
 					var drag = new Drag( this );
 					drag.Data.Text = asset.RelativePath;
-					drag.Data.Url = new System.Uri( "file:///" + asset.AbsolutePath );
+					drag.Data.Url = new System.Uri( System.IO.Path.GetFullPath( asset.AbsolutePath ) );
 					drag.Execute();
 					return true;
 				}
@@ -96,12 +96,12 @@ public partial class AssetList : ListView, AssetSystem.IEventListener
 				if ( asset == null )
 				{
 					drag.Data.Text = ae.FileInfo.FullName;
-					drag.Data.Url = new System.Uri( "file:///" + ae.FileInfo.FullName );
+					drag.Data.Url = new System.Uri( System.IO.Path.GetFullPath( ae.FileInfo.FullName ) );
 				}
 				else
 				{
 					drag.Data.Text = asset.RelativePath;
-					drag.Data.Url = new System.Uri( "file:///" + asset.AbsolutePath );
+					drag.Data.Url = new System.Uri( System.IO.Path.GetFullPath( asset.AbsolutePath ) );
 				}
 
 				// Add the other selected assets too..
@@ -123,7 +123,7 @@ public partial class AssetList : ListView, AssetSystem.IEventListener
 				var directory = de.DirectoryInfo;
 
 				var drag = new Drag( this );
-				drag.Data.Url = new Uri( "file:///" + directory.FullName );
+				drag.Data.Url = new Uri( System.IO.Path.GetFullPath( directory.FullName ) );
 				drag.Execute();
 
 				return true;
