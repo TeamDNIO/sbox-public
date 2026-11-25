@@ -7,6 +7,17 @@
         flex-direction: column;
         overflow: hidden;
         width: 100%;
+
+        > .body
+        {
+            flex-direction: column;
+            gap: 2px;
+
+            > *
+            {
+                flex-shrink: 0;
+            }
+        }
     }
 
     GameObjectInspector .object-info
@@ -19,7 +30,7 @@
         color: $ui-text-muted;
         border-bottom: 1px solid $ui-separator;
 
-        span
+        .stat
         {
             gap: 4px;
             align-items: center;
@@ -82,7 +93,7 @@
         }
     }
 
-    GameObjectInspector UISheet UIColor
+    GameObjectInspector UISheet .colorcontrol
     {
         justify-content: flex-end;
     }

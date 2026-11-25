@@ -124,7 +124,10 @@ public sealed class PlayerCarry : Component, Local.IPlayerEvents
 
 		if ( Player.Controller.Hovered.IsValid() || Player.Controller.Pressed.IsValid() ) return;
 
-		if ( !TryPickup( FindTarget() ) ) return;
+		var target = FindTarget();
+		if ( !target.IsValid() ) return;
+		if ( Player.GetComponent<PlayerInventory>()?.ActiveWeapon is Toolgun toolgun && toolgun.GetCurrentMode()?.ReservesUseFor( target.GameObject ) == true ) return;
+		if ( !TryPickup( target ) ) return;
 
 		Input.Clear( "use" );
 	}
@@ -403,6 +406,8 @@ public sealed class PlayerCarry : Component, Local.IPlayerEvents
 	[Rpc.Host]
 	void ThrowBody( Rigidbody body, Vector3 velocity )
 	{
+		if ( !Rpc.Caller.IsHost && Rpc.Caller != Network.Owner ) return;
+
 		// Only what we accepted and are moving for them, not a pickup we refused or haven't got to yet
 		if ( !body.IsValid() || body.IsProxy || _simulated != body.GameObject ) return;
 

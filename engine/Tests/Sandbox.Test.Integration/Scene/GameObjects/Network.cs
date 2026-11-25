@@ -824,11 +824,43 @@ public class NetworkTest
 			}
 		}
 
-		refreshMsg.JsonData = rootJson.ToJsonString();
+		refreshMsg.JsonData = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes( rootJson );
 
 		go._net.OnRefreshMessage( clientAndHost.Client, refreshMsg );
 
 		Assert.AreEqual( 2, comp.FromHostInt, "FromHost property should not be overwritten by network refresh on the host" );
+	}
+
+	[TestMethod]
+	public void FromHostPropertyNotOverwrittenByOwnerTable()
+	{
+		var scene = new Scene();
+		using var scope = scene.Push();
+
+		using var clientAndHost = new ClientAndHost( TypeLibrary );
+
+		clientAndHost.BecomeHost();
+
+		var go = new GameObject();
+		go.Parent = scene;
+
+		var fromHost = go.Components.Create<FromHostPropertyComponent>();
+		var regular = go.Components.Create<RegularPropertyComponent>();
+		go.NetworkSpawn( clientAndHost.Client );
+
+		fromHost.FromHostInt = 3;
+		regular.RegularInt = 3;
+		var table = ByteStream.Create( 256 );
+		go._net.dataTable.WriteAll( ref table );
+		var tableData = table.ToArray();
+		table.Dispose();
+		fromHost.FromHostInt = 2;
+		regular.RegularInt = 2;
+
+		go._net.OnNetworkTableMessage( new ObjectNetworkTableMsg { Guid = go.Id, TableData = tableData }, clientAndHost.Client );
+
+		Assert.AreEqual( 2, fromHost.FromHostInt, "The owner must not write a FromHost property" );
+		Assert.AreEqual( 3, regular.RegularInt, "The owner still writes the properties it controls" );
 	}
 
 	[TestMethod]
@@ -871,7 +903,7 @@ public class NetworkTest
 			}
 		}
 
-		refreshMsg.JsonData = rootJson.ToJsonString();
+		refreshMsg.JsonData = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes( rootJson );
 
 		go._net.OnRefreshMessage( clientAndHost.Client, refreshMsg );
 

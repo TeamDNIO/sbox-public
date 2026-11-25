@@ -82,6 +82,7 @@ public class NetworkTableTest
 		fail = false;
 		table.WriteSnapshotState( snapshot );
 		var previous = snapshot.Lookup[1].Value;
+		var previousBytes = previous.ToArray();
 		var previousChange = snapshot.LastChange;
 
 		value++;
@@ -93,7 +94,7 @@ public class NetworkTableTest
 
 		fail = false;
 		table.WriteSnapshotState( snapshot );
-		Assert.IsFalse( previous.SequenceEqual( snapshot.Lookup[1].Value ) );
+		Assert.IsFalse( previousBytes.SequenceEqual( snapshot.Lookup[1].Value ) );
 	}
 
 	[TestMethod]
@@ -332,6 +333,10 @@ public class NetworkTableTest
 		using var dict5 = new NetDictionary<string, int> { ["Foo"] = 0, ["Bar"] = 1 };
 		using var dict6 = new NetDictionary<string, int> { ["Foo"] = 1, ["Bar"] = 0 };
 		ExchangeTest( dict5, dict6, t => t.Remove( "Foo" ) );
+
+		using var dict7 = new NetDictionary<FindMode, float> { [FindMode.InSelf] = 1, [FindMode.InChildren] = 2 };
+		using var dict8 = new NetDictionary<FindMode, float> { [FindMode.InSelf] = 3 };
+		ExchangeTest( dict7, dict8, t => t[FindMode.InSelf] = 5 );
 	}
 
 	[TestMethod]

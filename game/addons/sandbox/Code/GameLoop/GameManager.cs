@@ -215,24 +215,29 @@ public sealed partial class GameManager : GameObjectSystem<GameManager>, Compone
 	private Vector3? _lastSpawnPosition;
 
 	/// <summary>
-	/// Find a place to respawn: a floor-settled spawn point nobody is standing on, avoiding the
-	/// last one used.
+	/// Find a place to respawn: the highest priority floor-settled spawn point nobody is standing on,
+	/// avoiding the last one used.
 	/// </summary>
 	Transform FindSpawnLocation()
 	{
-		var spawnPoints = Scene.GetAllComponents<SpawnPoint>().ToArray();
+		var spawnPoints = SpawnPoint.GetAllByPriority( Scene );
 
 		// No spawn points — fall back to the world origin and warn. The map needs a SpawnPoint.
-		if ( spawnPoints.Length == 0 )
+		if ( spawnPoints.Count == 0 )
 		{
 			Log.Warning( "No SpawnPoint components in the scene — spawning at the world origin. Add a SpawnPoint to the map to fix this." );
 			return Transform.Zero;
 		}
 
-		var transform = SpawnPlacement.FindSpawnPosition(
-			spawnPoints.OrderBy( _ => Random.Shared.Next() ).Select( x => x.Transform.World ),
-			PlayerHull,
-			avoid: _lastSpawnPosition );
+		// Lower priorities are only used once every higher one is occupied. Within a priority, push the
+		// last one used to the back (stable sort, so the shuffle is kept).
+		var last = _lastSpawnPosition;
+		var seeds = spawnPoints
+			.OrderByDescending( x => x.Priority )
+			.ThenBy( x => last.HasValue && x.WorldPosition.Distance( last.Value ) < 16f ? 1 : 0 )
+			.Select( x => x.Transform.World );
+
+		var transform = SpawnPlacement.FindSpawnPosition( seeds, PlayerHull );
 
 		_lastSpawnPosition = transform.Position;
 		return transform;
@@ -340,12 +345,17 @@ public sealed partial class GameManager : GameObjectSystem<GameManager>, Compone
 	internal static void ChangeProperty( Component c, string propertyName, object value )
 	{
 		if ( !c.IsValid() ) return;
+		if ( !c.GameObject.HasAccess( Rpc.Caller ) ) return;
+
+		// Players are never edited this way, not even by themselves (health, godmode)
+		if ( !Rpc.Caller.IsHost && c.GameObject.FindPlayer().IsValid() ) return;
 
 		var tl = TypeLibrary.GetType( c.GetType() );
 		if ( tl is null ) return;
 
 		var prop = tl.GetProperty( propertyName );
 		if ( prop is null ) return;
+		if ( !prop.HasAttribute<PropertyAttribute>() ) return;
 
 		prop.SetValue( c, value );
 
@@ -357,33 +367,11 @@ public sealed partial class GameManager : GameObjectSystem<GameManager>, Compone
 		c.GameObject.Network?.Refresh();
 	}
 
-	/// <summary>
-	/// Apply a debounced batch of morph changes to a <see cref="SkinnedModelRenderer"/>,
-	/// replicated to all clients. Only the morphs present in the batch are modified.
-	/// </summary>
-	[Rpc.Host]
-	internal static void ApplyMorphBatch( SkinnedModelRenderer smr, string morphsJson )
-	{
-		if ( !smr.IsValid() ) return;
-
-		smr.GameObject.GetOrAddComponent<MorphState>().ApplyBatch( morphsJson );
-	}
-
-	/// <summary>
-	/// Apply a full morph preset (as json), and captures with <see cref="MorphState"/> which replicates changes to other clients
-	/// </summary>
-	[Rpc.Host]
-	internal static void ApplyFacePosePreset( SkinnedModelRenderer smr, string morphsJson )
-	{
-		if ( !smr.IsValid() ) return;
-
-		smr.GameObject.GetOrAddComponent<MorphState>().ApplyPreset( morphsJson );
-	}
-
 	[Rpc.Host]
 	internal static async void ChangeMaterialOverride( ModelRenderer renderer, int materialIndex, string materialPath )
 	{
 		if ( !renderer.IsValid() ) return;
+		if ( !renderer.GameObject.HasAccess( Rpc.Caller ) ) return;
 
 		Material material = null;
 
@@ -407,6 +395,7 @@ public sealed partial class GameManager : GameObjectSystem<GameManager>, Compone
 	internal static async void ChangeWholeMaterialOverride( ModelRenderer renderer, string materialPath )
 	{
 		if ( !renderer.IsValid() ) return;
+		if ( !renderer.GameObject.HasAccess( Rpc.Caller ) ) return;
 
 		Material material = null;
 
@@ -427,6 +416,7 @@ public sealed partial class GameManager : GameObjectSystem<GameManager>, Compone
 	internal static void ChangeMaterialGroup( ModelRenderer renderer, string group )
 	{
 		if ( !renderer.IsValid() ) return;
+		if ( !renderer.GameObject.HasAccess( Rpc.Caller ) ) return;
 
 		renderer.MaterialGroup = group;
 
@@ -441,6 +431,7 @@ public sealed partial class GameManager : GameObjectSystem<GameManager>, Compone
 	internal static void ChangeBodyGroup( ModelRenderer renderer, string partName, int choice )
 	{
 		if ( !renderer.IsValid() ) return;
+		if ( !renderer.GameObject.HasAccess( Rpc.Caller ) ) return;
 
 		// several objects can be selected at once, skip the ones whose model doesn't have this choice
 		var part = renderer.Model?.Parts.Get( partName );

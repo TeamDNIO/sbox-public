@@ -148,6 +148,11 @@ public static partial class Networking
 	public static int MaxPlayers { get; internal set; }
 
 	/// <summary>
+	/// Is the current server running on a dedicated server.
+	/// </summary>
+	public static bool IsDedicatedServer { get; internal set; }
+
+	/// <summary>
 	/// The last connection string used to connect to a server.
 	/// </summary>
 	internal static string LastConnectionString { get; set; }
@@ -259,6 +264,24 @@ public static partial class Networking
 	/// </summary>
 	public static bool IsConnecting => System?.IsConnecting ?? false;
 
+	static int _joinsStarting;
+
+	/// <summary>
+	/// Joining someone else's game: from the moment the join starts, finding a Steam lobby included, until the game
+	/// it joins is loaded, or the join fails. Loading another game meanwhile would leave the session.
+	/// </summary>
+	internal static bool IsJoining => Volatile.Read( ref _joinsStarting ) > 0 || (IsClient && !Game.InGame);
+
+	/// <summary>
+	/// A join is starting, before there's a <see cref="System"/> to show for it. Taken synchronously, before the
+	/// first await, so nothing sees a gap.
+	/// </summary>
+	internal static DisposeAction JoinScope()
+	{
+		Interlocked.Increment( ref _joinsStarting );
+		return new DisposeAction( () => Interlocked.Decrement( ref _joinsStarting ) );
+	}
+
 	/// <summary>
 	/// True if we're currently connecting to the server
 	/// </summary>
@@ -355,6 +378,7 @@ public static partial class Networking
 	internal static void Reset()
 	{
 		MaxPlayers = 0;
+		IsDedicatedServer = false;
 		ServerData.Clear();
 		LocalStats = default;
 	}
@@ -704,6 +728,7 @@ public static partial class Networking
 
 			System.Disconnect();
 			System = null;
+			IsDedicatedServer = false;
 
 			DedicatedServer.Hide();
 		}
@@ -829,6 +854,7 @@ public static partial class Networking
 	{
 		var request = Api.Activity.PendingRequest;
 		var result = ConnectResult.Interrupted;
+		using var joining = JoinScope();
 		try
 		{
 			return result = await TryConnectCore( target, retries, token );
@@ -950,6 +976,7 @@ public static partial class Networking
 	{
 		var request = Api.Activity.PendingRequest;
 		var result = ConnectResult.Interrupted;
+		using var joining = JoinScope();
 		try
 		{
 			result = await TryConnectSteamIdInternal( steamId, retries );

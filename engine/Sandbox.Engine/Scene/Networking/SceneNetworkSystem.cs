@@ -421,6 +421,32 @@ public partial class SceneNetworkSystem : GameNetworkSystem
 	private static readonly GameObject.SerializeOptions _snapshotSerializeOptions = new() { SceneForNetwork = true, SkipNulls = true };
 	private static readonly GameObject.SerializeOptions _handoffSerializeOptions = new() { SceneForNetwork = true, SkipNulls = true, IncludeLocalObjects = true };
 
+	static bool _snapshotWarmed;
+
+	/// <summary>
+	/// The first snapshot a host takes JITs the scene serialization path and fills its reflection caches: ~230 ms with
+	/// a few thousand objects, on the frame the first player joins. Take one that's thrown away while the first scene loads instead.
+	/// </summary>
+	internal void WarmSnapshot()
+	{
+		if ( _snapshotWarmed ) return;
+
+		var scene = Game.ActiveScene;
+		if ( !scene.IsValid() ) return;
+
+		_snapshotWarmed = true;
+
+		try
+		{
+			using var blobs = BlobDataSerializer.Capture();
+			scene.Serialize( _snapshotSerializeOptions ).ToJsonString();
+		}
+		catch ( Exception e )
+		{
+			Log.Warning( e, $"Couldn't serialize the scene for network snapshots: {e.Message}" );
+		}
+	}
+
 	/// <summary>
 	/// A client has joined and wants a snapshot of the world.
 	/// </summary>
@@ -1587,7 +1613,7 @@ struct ObjectDestroyDescendantMsg
 [Expose]
 struct ObjectRefreshDescendantMsg
 {
-	public string JsonData { get; set; }
+	public byte[] JsonData { get; set; }
 	public byte[] BlobData { get; set; }
 	public byte[] TableData { get; set; }
 	public byte[] Snapshot { get; set; }
@@ -1602,7 +1628,7 @@ struct ObjectRefreshDescendantMsg
 [Expose]
 struct ObjectRefreshComponentMsg
 {
-	public string JsonData { get; set; }
+	public byte[] JsonData { get; set; }
 	public byte[] BlobData { get; set; }
 	public byte[] TableData { get; set; }
 	public byte[] Snapshot { get; set; }
@@ -1617,7 +1643,7 @@ struct ObjectRefreshComponentMsg
 [Expose]
 struct ObjectRefreshMsg
 {
-	public string JsonData { get; set; }
+	public byte[] JsonData { get; set; }
 	public byte[] BlobData { get; set; }
 	public byte[] TableData { get; set; }
 	public byte[] Snapshot { get; set; }
@@ -1667,7 +1693,7 @@ struct ObjectCreateBatchMsg
 struct ObjectCreateMsg
 {
 	public ushort SnapshotVersion { get; set; }
-	public string JsonData { get; set; }
+	public byte[] JsonData { get; set; }
 	public byte[] BlobData { get; set; }
 	public Transform Transform { get; set; }
 	public Guid Guid { get; set; }

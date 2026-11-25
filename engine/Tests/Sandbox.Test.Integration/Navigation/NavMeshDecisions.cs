@@ -2,6 +2,7 @@ using Sandbox.Navigation;
 using Sandbox.Volumes;
 using System;
 using System.Collections.Generic;
+using System.Threading;
 
 namespace NavigationTests;
 
@@ -404,6 +405,40 @@ public class NavMeshDecisions
 		Assert.IsFalse( loaded.OnMesh( Vector3.Zero ), "The bake should be of the world as it was when it was asked for" );
 	}
 
+	/// <summary>
+	/// Cancelling a navigation compile preserves the last completed file and its scene reference.
+	/// </summary>
+	[TestMethod]
+	public async Task CancelledCompileKeepsPreviousNavMeshBake()
+	{
+		var scene = new Scene();
+		using var scope = scene.Push();
+		scene.Floor( Vector3.Zero );
+		await scene.NavMesh.Generate( scene.PhysicsWorld );
+
+		var job = ((Editor.ISceneCompile)scene.GetSystem<NavMeshGameSystem>()).GetWork();
+		Assert.IsNotNull( job.Run );
+		Assert.IsNotNull( job.Clear );
+
+		var folder = new WrittenFiles();
+		Assert.IsTrue( await scene.NavMesh.BakeInEditor( scene.PhysicsWorld, folder, () => true, regenerate: true ) );
+		var writes = folder.Written.Count;
+		var reference = scene.NavMesh.Serialize()["BakedDataPath"].ToJsonString();
+		Assert.IsTrue( folder.Written[^1].Length > 0 );
+
+		using var cancel = new CancellationTokenSource();
+		var compile = scene.NavMesh.BakeForCompile( scene, folder, cancel.Token, clean: false );
+		cancel.Cancel();
+		await Assert.ThrowsExceptionAsync<OperationCanceledException>( () => compile );
+
+		Assert.AreEqual( writes, folder.Written.Count );
+		Assert.AreEqual( reference, scene.NavMesh.Serialize()["BakedDataPath"].ToJsonString() );
+
+		await scene.NavMesh.BakeForCompile( scene, folder, CancellationToken.None, clean: false );
+		Assert.AreEqual( writes + 1, folder.Written.Count );
+		Assert.IsTrue( folder.Written[^1].Length > 0 );
+	}
+
 	[TestMethod]
 	public async Task AnEditorBakeIsNotWrittenForASceneEditedMeanwhileOrBakedAgain()
 	{
@@ -774,6 +809,61 @@ public class NavMeshDecisions
 		scene.NavUpdate();
 		Assert.IsNotNull( link.WorldStartPositionOnNavmesh );
 		Assert.AreEqual( NavMeshPathStatus.Complete, scene.NavMesh.CalculatePath( up ).Status );
+	}
+
+	/// <summary>
+	/// A game scene loaded without the loading flow (SceneLoadOptions.ShowLoadingScreen = false) never ran
+	/// NavMesh.Load, so its first navigation updates load it.
+	/// </summary>
+	[TestMethod]
+	public async Task GameSceneLoadedWithoutTheLoadingScreenLoadsItsNavMesh()
+	{
+		var scene = new Scene();
+		using var scope = scene.Push();
+		var file = new SceneFile { GameObjects = [] };
+		file.RegisterWeakResourceId( "tests/navmesh_no_loading_screen.scene" );
+		var options = new SceneLoadOptions { ShowLoadingScreen = false };
+		options.SetScene( file );
+		Assert.IsTrue( scene.Load( options ) );
+
+		// What the scene file would have brought: geometry and an enabled navmesh
+		scene.Floor( Vector3.Zero, 700 );
+		scene.NavMesh.IsEnabled = true;
+		Assert.IsFalse( scene.IsEditor );
+		Assert.IsFalse( scene.NavMesh.IsLoaded );
+
+		for ( int i = 0; i < 5000 && !scene.NavMesh.IsLoaded; i++ )
+		{
+			scene.GameTick();
+			await Task.Delay( 1 );
+		}
+
+		Assert.IsTrue( scene.NavMesh.IsLoaded );
+		Assert.IsTrue( scene.NavMesh.OnMesh( Vector3.Zero ) );
+	}
+
+	/// <summary>
+	/// A game that turns the navmesh on at runtime builds the tiles it asks for, the game loop doesn't load the whole mesh for it.
+	/// </summary>
+	[TestMethod]
+	public async Task NavMeshEnabledAtRuntimeIsNotLoadedByTheGameLoop()
+	{
+		var scene = new Scene();
+		using var scope = scene.Push();
+		scene.Floor( Vector3.Zero, 700 );
+		scene.Floor( new Vector3( 2000, 0, 0 ), 700 );
+		scene.NavMesh.IsEnabled = true;
+
+		scene.NavMesh.RequestTilesGeneration( BBox.FromPositionAndSize( Vector3.Zero, 200 ) );
+		for ( int i = 0; i < 50; i++ )
+		{
+			scene.GameTick();
+			await Task.Delay( 1 );
+		}
+
+		Assert.IsFalse( scene.NavMesh.IsLoaded );
+		Assert.IsTrue( scene.NavMesh.OnMesh( Vector3.Zero ), "The requested tiles are built" );
+		Assert.IsFalse( scene.NavMesh.OnMesh( new Vector3( 2000, 0, 0 ) ), "Tiles nobody asked for are not" );
 	}
 }
 
