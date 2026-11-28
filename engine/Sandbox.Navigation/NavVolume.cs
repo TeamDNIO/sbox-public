@@ -40,7 +40,9 @@ public record struct NavVolume
 	public float Radius;
 
 	/// <summary>
-	/// World units the shape grows by horizontally.
+	/// World units the shape grows by when tiles are marked: a box sideways only, a sphere or capsule all round.
+	/// At least 0 and finite, else AddVolume and SetVolume throw. A blocker with the agent radius keeps agents
+	/// that far from it, as erosion does from a wall.
 	/// </summary>
 	public float Margin;
 }

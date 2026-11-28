@@ -4,10 +4,90 @@ $ui-menu-control-height: 30px;
 $ui-menu-tab-height: 32px;
 $ui-menu-title-height: 51px;
 
+// Floating tool windows use the same body, header and spacing as the spawn menu.
+@mixin ui-menu-window
+{
+	flex-direction: column;
+	overflow: hidden;
+	border-radius: 8px;
+	background-color: $ui-menu-body;
+	backdrop-filter: blur( $ui-menu-blur );
+	font-family: $body-font;
+	font-size: $ui-settings-font;
+	color: $ui-text;
+}
+
+@mixin ui-menu-window-header
+{
+	align-items: center;
+	flex-shrink: 0;
+	height: $ui-menu-title-height;
+	padding: 0 $spawn-menu-content-inset;
+	gap: 8px;
+	background-color: $ui-catalog-surface;
+	border-bottom: 1px solid $ui-separator;
+	font-size: 20px;
+	font-weight: 600;
+	color: $ui-text-strong;
+}
+
 @mixin ui-control-surface
 {
 	background-image: none;
 	background-color: $ui-control-bg;
+}
+
+@mixin ui-menu-control
+{
+	@include ui-control-surface;
+	height: $ui-menu-control-height;
+	border-radius: $ui-menu-radius;
+}
+
+// Clickable fields in property sheets and the object inspector.
+@mixin ui-inspector-field
+{
+	@include ui-control-surface;
+	@include ui-focus-ring;
+	align-items: center;
+	flex-grow: 1;
+	flex-shrink: 1;
+	min-width: 0;
+	height: 34px;
+	padding: 4px 10px;
+	gap: 9px;
+	border: 1px solid $ui-control-border;
+	border-radius: $ui-menu-radius;
+	font-family: $body-font;
+	font-size: $ui-settings-font;
+	font-weight: 500;
+	color: $ui-text;
+	cursor: pointer;
+
+	> .preview
+	{
+		width: 22px;
+		height: 22px;
+	}
+
+	&:hover, &.capturing
+	{
+		filter: brightness( 1 );
+		background-color: $ui-blue-soft;
+		border-color: $ui-control-border-hover;
+	}
+
+	&:hover
+	{
+		sound-in: ui.hover;
+	}
+
+	&:active
+	{
+		transform: none;
+		border-color: $ui-blue;
+		sound-in: ui.select;
+	}
 }
 
 @mixin ui-switch
@@ -85,8 +165,7 @@ $ui-menu-title-height: 51px;
 		{
 			@include ui-number-entry;
 			height: 24px;
-			border-color: $ui-field-border;
-			border-radius: 4px;
+			border-radius: $ui-menu-radius;
 			background-color: $ui-input-bg;
 			color: $ui-text-strong;
 
@@ -171,6 +250,19 @@ $ui-menu-title-height: 51px;
 		{
 			@include ui-tab-button;
 		}
+
+		> .button
+		{
+			@include ui-header-button;
+			width: $ui-menu-tab-height;
+			pointer-events: all;
+
+			> .icon
+			{
+				font-size: 18px;
+				pointer-events: none;
+			}
+		}
 	}
 
 	> .tab-body
@@ -207,14 +299,4 @@ $ui-menu-title-height: 51px;
 	font-size: 13px;
 	font-weight: 600;
 	white-space: normal;
-}
-
-@mixin ui-section-band
-{
-	background-color: rgba( $ui-text-strong, 0.06 );
-	border-bottom: 1px solid $ui-separator;
-	border-radius: 0;
-	color: $ui-text-strong;
-	font-size: 13px;
-	font-weight: 700;
 }

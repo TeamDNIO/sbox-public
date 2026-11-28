@@ -53,12 +53,15 @@ internal static partial class PackageManager
 		if ( package is null )
 			throw new FileNotFoundException( $"Unable to find package '{options.PackageIdent}'" );
 
+		if ( package.IsRemoteMap )
+			throw new InvalidOperationException( $"Load map '{package.FullIdent}' by Workshop item ID or asset path." );
+
 		if ( package is LocalPackage local )
 		{
 			if ( local.Project.Broken )
 				throw new InvalidOperationException( $"Couldn't load local project '{local.FullIdent}'" );
 
-			if ( local.Project.NeedsInstallCompilation )
+			if ( options.ContextTag != "game" && local.Project.NeedsInstallCompilation )
 			{
 				options.Loading?.LoadingProgress( LoadingProgress.Create( $"Compiling {local.Title}" ) );
 				if ( await Project.AddGameFromFile( local.Project.ConfigFilePath ) is null )
@@ -81,7 +84,7 @@ internal static partial class PackageManager
 		// Their files and ours all download at once in the background, and each install finds them cached.
 		//
 		using var prefetchCancel = CancellationTokenSource.CreateLinkedTokenSource( options.CancellationToken );
-		var prefetch = options.IsDependency || options.SkipAssetDownload || !package.EnumerateInstallDependencies().Any()
+		var prefetch = options.IsDependency || !package.EnumerateInstallDependencies().Any()
 			? Task.CompletedTask
 			: PrefetchAsync( package, true, prefetchCancel.Token );
 
@@ -260,7 +263,7 @@ internal static partial class PackageManager
 	}
 
 	/// <summary>
-	/// Retrieve a package by ident and minimum download mode.
+	/// Find a mounted package by its identifier.
 	/// </summary>
 	internal static ActivePackage Find( string packageIdent, bool exactName = false )
 	{

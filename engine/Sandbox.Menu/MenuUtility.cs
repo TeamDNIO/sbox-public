@@ -229,7 +229,7 @@ public static partial class MenuUtility
 			//
 			if ( _friendList is null )
 			{
-				_friendList = Steamworks.SteamFriends.GetFriends().Select( x => new Friend( x ) ).ToList();
+				_friendList = Sandbox.SteamApi.SteamFriends.GetFriendIds().Select( id => new Friend( id ) ).ToList();
 			}
 
 			return _friendList;
@@ -454,7 +454,7 @@ public static partial class MenuUtility
 			.Select( x => ulong.TryParse( x, out var id ) ? id : 0 ).Where( x => x != 0 ).Distinct()
 			.Select( x => new Friend( x ) ).ToArray();
 		foreach ( var member in members )
-			Steamworks.SteamFriends.RequestUserInformation( member.Id );
+			Sandbox.SteamApi.SteamFriends.RequestUserInformation( member.Id );
 		return members;
 	}
 
@@ -515,14 +515,12 @@ public static partial class MenuUtility
 		return services.Select( x => new LinkedService( x.Type, x.Id, x.Name, x.Avatar ) ).ToList();
 	}
 
-	public static async Task SetMountState( string name, bool state )
+	/// <summary>
+	/// Mount or unmount a game and save the player's preference outside the editor.
+	/// </summary>
+	public static Task SetMountState( string name, bool state )
 	{
-		await Sandbox.Mounting.Directory.SetMountState( name, state );
-
-		if ( !Application.IsEditor )
-		{
-			Sandbox.Mounting.Directory.SaveConfig();
-		}
+		return Sandbox.Mounting.Directory.SetMountState( name, state, savePreference: !Application.IsEditor );
 	}
 
 	/// <summary>
@@ -573,6 +571,14 @@ public class StoragePublish
 
 	public async Task Submit()
 	{
+		var preview = Thumbnail?.ToPng();
+		var extension = "png";
+		if ( preview?.Length >= Workshop.MaxPreviewBytes )
+		{
+			preview = Workshop.EncodePreviewJpeg( Thumbnail ) ?? throw new InvalidOperationException( "Workshop preview exceeds Steam's 1 MiB limit." );
+			extension = "jpg";
+		}
+
 		if ( PublishedFileId != 0 )
 		{
 			item = Sandbox.Services.Ugc.OpenItem( PublishedFileId );
@@ -607,10 +613,10 @@ public class StoragePublish
 		}
 
 		// Save thumbnail to a temp file
-		if ( Thumbnail != null )
+		if ( preview != null )
 		{
-			_imagePath = System.IO.Path.GetTempFileName() + ".png";
-			System.IO.File.WriteAllBytes( _imagePath, Thumbnail.ToPng() );
+			_imagePath = System.IO.Path.Combine( System.IO.Path.GetTempPath(), $"{Guid.NewGuid()}.{extension}" );
+			System.IO.File.WriteAllBytes( _imagePath, preview );
 			item.SetPreviewImage( _imagePath );
 		}
 

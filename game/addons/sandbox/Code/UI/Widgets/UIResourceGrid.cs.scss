@@ -50,8 +50,10 @@
 		height: 46px;
 		flex-shrink: 0;
 		padding: 1px;
-		background-color: $ui-well;
-		border: 1px solid $ui-control-border;
+		background-color: $ui-resource-preview-bg;
+		border: 1px solid transparent;
+		border-radius: $ui-menu-radius;
+		overflow: hidden;
 		cursor: pointer;
 
 		&:hover
@@ -89,19 +91,11 @@
 		}
 	}
 
-	SpawnMenu UIResourceGrid .resource-cell, ToolsMenu UIResourceGrid .resource-cell
-	{
-		border-radius: $ui-menu-radius;
-		overflow: hidden;
-		&:not(.selected) { background-color: $ui-resource-preview-bg; border-color: transparent; }
-		&:hover { border-color: $ui-control-border-hover; }
-	}
-
 	UISheet UIResourceGrid
 	{
 		margin-bottom: 0;
 		border-color: $ui-field-border;
-		border-radius: 7px;
+		border-radius: $ui-menu-radius;
 
 		.thumb { background-size: contain; }
 	}

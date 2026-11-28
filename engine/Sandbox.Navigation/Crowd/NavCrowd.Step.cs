@@ -4,11 +4,14 @@ namespace Nav;
 
 public sealed partial class NavCrowd
 {
-	// The mesh state the current Step works on, kept to notice the next change.
-	MeshState? pinned;
+	// Per agent type, the mesh state the current Step works on, kept to notice the next change.
+	MeshState?[] pinned = [];
 
 	uint step;
-	float dt;
+	// The substep, the Step's delta and the time its substeps cover, which a long pause bounds; whether this is its last.
+	float dt, stepDelta, stepTime;
+	int substeps;
+	bool lastSubstep;
 	Action<int, Action<int>>? run;
 
 	// The stages that run through the run hook: Bucket, Count and Assign are binning. Sync, the snapshot and
@@ -52,11 +55,14 @@ public sealed partial class NavCrowd
 		Sync( delta );
 
 		// Bound the movement of one substep, and of a step after a long pause.
-		int substeps = (int)Math.Clamp( MathF.Ceiling( delta / substepTime ), 1f, maxSubsteps );
-		dt = MathF.Min( delta, maxSubsteps * substepTime ) / substeps;
+		substeps = (int)Math.Clamp( MathF.Ceiling( delta / substepTime ), 1f, maxSubsteps );
+		stepTime = MathF.Min( delta, maxSubsteps * substepTime );
+		dt = stepTime / substeps;
+		stepDelta = delta;
 
 		for ( int n = 0; n < substeps; n++ )
 		{
+			lastSubstep = n == substeps - 1;
 			tallies.AsSpan().Clear();
 			Run( Stage.Plan );
 			Snapshot();
@@ -71,20 +77,25 @@ public sealed partial class NavCrowd
 	// velocity is how far the caller has moved it since the last Step, unless the caller tells it.
 	void Sync( float delta )
 	{
-		var s = mesh.State;
-		bool changed = s != pinned;
-		pinned = s;
+		Span<bool> changed = stackalloc bool[types.Length];
+		for ( int k = 0; k < types.Length; k++ )
+		{
+			var s = types[k].State;
+			changed[k] = s != pinned[k];
+			pinned[k] = s;
+		}
 		for ( int i = 0; i < high; i++ )
 		{
 			ref var a = ref agents[i];
 			if ( !a.Has( AgentFlags.Active ) ) continue;
-			if ( changed )
+			if ( changed[parms[i].AgentType] )
 			{
 				a.Flags |= AgentFlags.Validate;
 				a.WallCount = -1;
 			}
 			if ( !parms[i].External ) continue;
 			if ( !a.Has( AgentFlags.OwnVelocity ) ) states[i].Velocity = (states[i].Position - a.Seen) / delta;
+			a.Flags &= ~AgentFlags.OwnVelocity;
 			a.Seen = states[i].Position;
 		}
 	}
@@ -117,8 +128,9 @@ public sealed partial class NavCrowd
 			Assign( worker );
 			return;
 		}
-		var query = queries[worker];
-		var s = pinned!;
+		// Agents of the first type, the only one of most meshes, use these; another type's are looked up.
+		var query0 = queries[worker];
+		var s0 = pinned[0]!;
 		bool pushed = false;
 		float reach = Reach;
 		Tally tally = default;
@@ -148,6 +160,8 @@ public sealed partial class NavCrowd
 					continue;
 				}
 				bool onLink = states[i].Link >= 0, external = parms[i].External;
+				int type = parms[i].AgentType;
+				var (s, query) = type == 0 ? (s0, query0) : (pinned[type]!, queries[type * workers + worker]);
 				switch ( stage )
 				{
 					// Agents on a link have nothing to plan: the move stage takes them across.
@@ -159,17 +173,26 @@ public sealed partial class NavCrowd
 						}
 						Show( i, ref tally, reach );
 						break;
+					// Its owner moves a Steered External agent once a Step, so it is steered once, in the last substep.
+					case Stage.Move when external && parms[i].Steered && !onLink && !lastSubstep:
+						break;
 					case Stage.Move when onLink:
 						WalkLink( i );
+						if ( states[i].Link >= 0 ) states[i].SteeredVelocity = states[i].DesiredVelocity;
 						break;
-					case Stage.Move when !external && a.Stride >= 0:
+					case Stage.Move when a.Stride >= 0 && (!external || parms[i].Steered):
 						Walk( i, s, query );
 						break;
-					case Stage.Separate when !external && slots[i] >= 0:
+					case Stage.Move:
+						states[i].SteeredVelocity = states[i].DesiredVelocity;
+						break;
+					// A Steered External agent is separated once a Step too, in the last substep, which is the push its owner gets.
+					case Stage.Separate when slots[i] >= 0 && (!external || (parms[i].Steered && !onLink && lastSubstep)):
 						pushed |= Separate( i );
 						break;
 					case Stage.Constrain when slots[i] >= 0 && a.Push != default:
-						MoveOnMesh( i, s, query, a.Push );
+						if ( external ) PushOwner( i, s, query );
+						else MoveOnMesh( i, s, query, a.Push );
 						break;
 				}
 			}

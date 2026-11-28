@@ -70,20 +70,38 @@ public partial class ProjectPublisher
 		if ( project.ProjectSourceObject is Asset asset )
 			return IsWorkshopAsset( asset ) ? asset.Publishing.PackageType() : null;
 
-		return project.Config.Type is "game" or "addon" && !project.Config.IsStandaloneOnly
+		return project.Config.Type is "game" or "addon" or "map" && !project.Config.IsStandaloneOnly
 			? project.Config.Type
 			: null;
 	}
 
 	/// <summary>
-	/// The workshop item the files go in, or 0 if there isn't one yet. The backend's package says which item
-	/// it is - a map asset's note of it can be missing or stale on this machine, and going by that would make a
-	/// second item. Games use the backend's ID; addons keep their ID in the project instead.
+	/// The workshop item the files go in, or 0 if there isn't one yet. Its ID is kept from the last upload
+	/// (<see cref="SavedWorkshopItemId"/>). Without one - last published before it was kept, or from another
+	/// machine - the backend's package says which item it is.
 	/// </summary>
-	static ulong FindWorkshopItemId( Package current, Asset asset )
+	static ulong FindWorkshopItemId( Project project, Package published, Asset asset )
 	{
-		return current is { InstallsFromWorkshop: true } ? current.WorkshopId : asset?.MetaData.Get( "WorkshopId", 0UL ) ?? 0;
+		if ( SavedWorkshopItemId( project, asset ) is var saved and not 0 )
+			return saved;
+
+		return published is { InstallsFromWorkshop: true } ? published.WorkshopId : 0;
 	}
+
+	/// <summary>
+	/// The workshop item ID kept from the last upload, or 0 - in <paramref name="asset"/>'s metadata for a map,
+	/// which has no project file of its own, and in the project for a game or addon
+	/// </summary>
+	static ulong SavedWorkshopItemId( Project project, Asset asset )
+	{
+		return asset is not null ? asset.MetaData.Get( "WorkshopId", 0UL ) : project.Config.GetMetaOrDefault( "WorkshopId", 0UL );
+	}
+
+	/// <summary>
+	/// The project's package as it's published on the backend, or null if it never has been. Not
+	/// <see cref="Package.FetchAsync(string, bool)"/>, which gives back the project's own local package.
+	/// </summary>
+	public static Task<Package> FetchPublishedPackageAsync( Project project ) => Package.FetchPublishedAsync( project.Config.FullIdent );
 
 	/// <summary>
 	/// The workshop item a publish of this project goes to unless it's told otherwise - 0 if it isn't a map,
@@ -94,10 +112,14 @@ public partial class ProjectPublisher
 		if ( WorkshopTypeFor( project ) is null )
 			return 0;
 
-		if ( PublishesOnlyToWorkshop( project ) )
-			return project.Config.GetMetaOrDefault( "WorkshopId", 0UL );
+		var asset = project.ProjectSourceObject as Asset;
+		var saved = SavedWorkshopItemId( project, asset );
 
-		return FindWorkshopItemId( await Package.FetchAsync( project.Config.FullIdent, false, false ), project.ProjectSourceObject as Asset );
+		// Kept already, so there's no need to ask - and an addon's not on the backend to ask about
+		if ( saved != 0 || PublishesOnlyToWorkshop( project ) )
+			return saved;
+
+		return FindWorkshopItemId( project, await FetchPublishedPackageAsync( project ), asset );
 	}
 
 	/// <summary>
@@ -167,7 +189,8 @@ public partial class ProjectPublisher
 	}
 
 	/// <summary>
-	/// Why publishing to this item won't work, or null. Only an item's owner can upload to it.
+	/// Why publishing to this item might not work, or null. Someone else's item can still be published to by its
+	/// contributors, so that's worth checking rather than a dead end.
 	/// </summary>
 	static string WarningFor( ulong id, Workshop.Item item )
 	{
@@ -175,7 +198,7 @@ public partial class ProjectPublisher
 			return $"Couldn't find workshop item {id}. If it's been deleted or hidden, Steam won't accept the upload.";
 
 		if ( item.Owner.Id != Game.SteamId )
-			return $"Workshop item {id} belongs to {item.Owner.Name}. Only its owner can publish to it.";
+			return $"Workshop item {id} belongs to {item.Owner.Name}. Steam will only accept the upload if you're one of its contributors.";
 
 		return null;
 	}
@@ -220,11 +243,10 @@ public partial class ProjectPublisher
 
 		WorkshopItemChecked = true;
 
-		var current = IsWorkshopOnly ? null : await Package.FetchAsync( Project.Config.FullIdent, false, false );
+		var current = IsWorkshopOnly ? null : await FetchPublishedPackageAsync( Project );
 		BackendPackage = current;
 		WorkshopItemId = WorkshopItemChosen ? ChosenWorkshopItemId
-			: IsWorkshopOnly ? Project.Config.GetMetaOrDefault( "WorkshopId", 0UL )
-			: FindWorkshopItemId( current, WorkshopAsset );
+			: FindWorkshopItemId( Project, current, WorkshopAsset );
 
 		// First publish, we'll create one
 		if ( WorkshopItemId == 0 )
@@ -239,7 +261,7 @@ public partial class ProjectPublisher
 
 		// If we can't see it we can't tell - leave its images alone
 		WorkshopHasImages = item?.HasImages ?? true;
-		WorkshopHasThumb = item is null || !string.IsNullOrEmpty( item.Thumb );
+		WorkshopHasThumb = item is null || item.Thumbnail is not null;
 	}
 
 	/// <summary>
@@ -478,7 +500,7 @@ public partial class ProjectPublisher
 	/// <summary>
 	/// Addons are identified and published entirely through Steam Workshop, without a backend package.
 	/// </summary>
-	public static bool PublishesOnlyToWorkshop( Project project ) => project.Config.Type == "addon";
+	public static bool PublishesOnlyToWorkshop( Project project ) => project.Config.Type is "addon" or "map";
 
 	/// <summary>
 	/// The workshop item this publishes to, or 0 if it'll create a new one
@@ -669,9 +691,6 @@ public partial class ProjectPublisher
 
 			CompleteWorkshopUpload( itemId );
 
-			// A map remembers its item on this machine too
-			WorkshopAsset?.MetaData.Set( "WorkshopId", itemId );
-
 			SetMeta( "WorkshopId", itemId );
 			workshopStage = WorkshopStage.Done;
 
@@ -704,16 +723,20 @@ public partial class ProjectPublisher
 	{
 		if ( itemId == 0 )
 			throw new Exception( WorkshopItemId != 0
-				? $"Steam didn't accept the upload to workshop item {WorkshopItemId}. Only its owner can publish to it."
+				? $"Steam didn't accept the upload to workshop item {WorkshopItemId}. Only its owner and contributors can publish to it."
 				: $"Couldn't create a workshop item for {Project.Config.Title}." );
 
 		WorkshopItemId = itemId;
 
-		if ( IsWorkshopOnly )
+		// Kept for the next publish - a map's in its asset's metadata, a game or addon's in its project
+		if ( WorkshopAsset is not null )
 		{
-			Project.Config.SetMeta( "WorkshopId", itemId );
-			Project.Save();
+			WorkshopAsset.MetaData.Set( "WorkshopId", itemId );
+			return;
 		}
+
+		Project.Config.SetMeta( "WorkshopId", itemId );
+		Project.Save();
 	}
 
 	/// <summary>
@@ -731,11 +754,6 @@ public partial class ProjectPublisher
 	/// The package as it is on the backend before this publish - where its art, screenshots and summary come from
 	/// </summary>
 	Package BackendPackage;
-
-	/// <summary>
-	/// Steam won't take a preview image bigger than this
-	/// </summary>
-	const int MaxPreviewBytes = 1024 * 1024;
 
 	/// <summary>
 	/// Download the package's screenshots on sbox.game, for the workshop item's previews. Videos are left out -
@@ -805,24 +823,7 @@ public partial class ProjectPublisher
 		if ( loaded is null ) return null;
 
 		using var cropped = square ? CropToSquare( loaded ) : null;
-		var bitmap = cropped ?? loaded;
-
-		var fitted = bitmap.Width > 1920 ? bitmap.Resize( 1920, (int)(bitmap.Height * (1920f / bitmap.Width)) ) : bitmap;
-
-		try
-		{
-			for ( var quality = 90; quality >= 40; quality -= 10 )
-			{
-				var jpg = fitted.ToJpg( quality );
-				if ( jpg.Length <= MaxPreviewBytes ) return jpg;
-			}
-
-			return null;
-		}
-		finally
-		{
-			if ( fitted != bitmap ) fitted.Dispose();
-		}
+		return Workshop.EncodePreviewJpeg( cropped ?? loaded );
 	}
 
 	/// <summary>

@@ -119,6 +119,12 @@ static class StartupLoadProject
 	{
 		// should never be one existing once we remove all this shit
 		Project project = Project.AddFromFile( path, false );
+		if ( project is null )
+		{
+			Log.Warning( $"Couldn't open project '{path}'." );
+			return false;
+		}
+
 		var parentPackage = project.Config.GetMetaOrDefault<string>( "ParentPackage", null );
 
 		Step( "Initializing filesystem" );
@@ -242,8 +248,7 @@ static class StartupLoadProject
 			}
 
 			Log.Info( $"MountAsync" );
-			// Mount our current project, and load the source!
-			await project.Package.MountAsync( true );
+			await project.Package.MountAsync();
 
 			// Mount our current project into the filesystem and make sure to load all assets
 			FileSystem.Mounted.Mount( project.AssetsFileSystem );
@@ -258,7 +263,14 @@ static class StartupLoadProject
 			if ( Sandbox.Application.IsUnitTest )
 				return true;
 
-			await GameInstanceDll.Current.LoadGamePackageAsync( project.Package.FullIdent, GameLoadingFlags.Host | GameLoadingFlags.Reload, ct );
+			var gameIdent = project.Package.FullIdent;
+			if ( project.Config.Type == "map" && !string.IsNullOrWhiteSpace( parentPackage ) )
+			{
+				LaunchArguments.Map = project.Package.FullIdent;
+				gameIdent = parentPackage;
+			}
+
+			await GameInstanceDll.Current.LoadGamePackageAsync( gameIdent, GameLoadingFlags.Host | GameLoadingFlags.Reload, ct );
 		}
 
 
@@ -382,6 +394,7 @@ static class StartupLoadProject
 		options.ConsoleOutput = false;
 
 		FastTimer timer = FastTimer.StartNew();
+		using var includeCache = Sandbox.Engine.Shaders.ShaderCompile.BeginIncludeCache( batch: true );
 		for ( int i = 0; i < gr.Length; i++ )
 		{
 			var (asset, sourcePath) = gr[i];

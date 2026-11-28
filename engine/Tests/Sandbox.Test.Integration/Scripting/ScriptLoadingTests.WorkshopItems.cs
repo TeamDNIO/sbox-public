@@ -13,46 +13,39 @@ public partial class ScriptLoadingTests
 	/// Package downloads and network requirements share one installed item until the final owner releases it.
 	/// </summary>
 	[TestMethod]
-	public void WorkshopMountsSharePackageFilesAndPreserveCodeOnlyViews()
+	public void WorkshopMountsSharePackageFilesUntilLastRelease()
 	{
-		var folder = CreateWorkshopContent( "map" );
+		var folder = CreateWorkshopContent( "addon" );
 		WorkshopFileSystem first = null;
 		BaseFileSystem packageFiles = null;
-		WorkshopFileSystem code = null;
 		try
 		{
 			AsyncPump.RunSynchronously( async () =>
 			{
 				first = await WorkshopFileSystem.OpenInstalledAsync( 4321, folder, default );
-				var package = new RemotePackage { Org = new Package.Organization { Ident = "test" }, Ident = "workshop-map", TypeName = "map", Version = new PackageRevision { Meta = "{\"WorkshopId\":4321}" } };
+				var package = new RemotePackage { Org = new Package.Organization { Ident = "test" }, Ident = "workshop-addon", TypeName = "addon", Version = new PackageRevision { Meta = "{\"WorkshopId\":4321}" } };
 				packageFiles = await package.Download();
-				code = await WorkshopFileSystem.OpenInstalledAsync( 4321, folder, default, codeOnly: true );
 			} );
 
 			Assert.IsInstanceOfType<WorkshopFileSystem>( packageFiles );
 			Assert.IsTrue( packageFiles.FileExists( "content.txt" ) );
-			Assert.IsTrue( code.FileExists( ".bin/package.cll" ) );
-			Assert.IsFalse( code.FileExists( "content.txt" ) );
 			Assert.IsFalse( packageFiles.FileExists( ".bin/unsafe.dll" ) );
 			first.Dispose();
 			Assert.IsTrue( WorkshopFileSystem.IsInUse( 4321 ) );
 			Assert.AreEqual( "content", packageFiles.ReadAllText( "content.txt" ) );
 			packageFiles.Dispose();
-			Assert.IsTrue( WorkshopFileSystem.IsInUse( 4321 ) );
-			code.Dispose();
 			Assert.IsFalse( WorkshopFileSystem.IsInUse( 4321 ) );
 		}
 		finally
 		{
 			first?.Dispose();
 			packageFiles?.Dispose();
-			code?.Dispose();
 			Directory.Delete( folder, true );
 		}
 	}
 
 	/// <summary>
-	/// A map package registers its Workshop ID instead of becoming a server package requirement.
+	/// Loading a map registers its item ID in the Workshop table.
 	/// </summary>
 	[TestMethod]
 	public void WorkshopMapUsesItemTable()
@@ -69,10 +62,8 @@ public partial class ScriptLoadingTests
 			context.FileMount = mounted;
 			AsyncPump.RunSynchronously( async () =>
 			{
-				using var installed = await WorkshopFileSystem.OpenInstalledAsync( 4321, folder, default );
-				var package = new RemotePackage { Org = new Package.Organization { Ident = "test" }, Ident = "workshop-map", TypeName = "map", Version = new PackageRevision { Meta = "{\"WorkshopId\":4321}" } };
-				Assert.IsNotNull( await package.MountAsync() );
-				Assert.IsTrue( package.IsMounted() );
+				Assert.IsNotNull( await items.LoadAsync( 4321, Workshop.ItemType.Map ) );
+				Assert.IsNotNull( items.Get( 4321 ) );
 				Assert.AreEqual( Workshop.ItemType.Map, items.StringTable.Entries["4321"].Read<WorkshopItems.ItemInfo>().Type );
 				items.RemoveRequirement( 4321 );
 				Assert.AreEqual( 0, items.StringTable.Entries.Count );
@@ -119,7 +110,7 @@ public partial class ScriptLoadingTests
 			if ( hasSteamMetadata )
 			{
 				Assert.AreEqual( "Old map", content.Title );
-				Assert.IsNull( content.Metadata.Value.Meta, "Steam's partial meta must not stand in for the package's." );
+				Assert.AreEqual( "{\"PrimaryAsset\":\"maps/old.vmap\"}", content.Metadata.Value.Meta );
 				Assert.AreEqual( "old map", mounted.ReadAllText( "content.txt" ) );
 			}
 		}
@@ -140,7 +131,6 @@ public partial class ScriptLoadingTests
 		File.WriteAllText( Path.Combine( folder, "metadata.json" ), Json.Serialize( new WorkshopItemMetaData { Title = "Test content", TypeName = type, Meta = "{}" } ) );
 		File.WriteAllText( Path.Combine( folder, "content.txt" ), "content" );
 		Directory.CreateDirectory( Path.Combine( folder, ".bin" ) );
-		File.WriteAllText( Path.Combine( folder, ".bin", "package.cll" ), "code archive" );
 		File.WriteAllText( Path.Combine( folder, ".bin", "unsafe.dll" ), "not an assembly" );
 		return folder;
 	}

@@ -3,7 +3,7 @@ using Sandbox.UI;
 /// <summary>
 /// Previews and paints toolgun decals on surfaces.
 /// </summary>
-[Title( "#tool.name.decal" )]
+[Title( "#tool.decal.name" )]
 [Icon( "🖌️" )]
 [ClassName( "decaltool" )]
 [Group( "#tool.group.render" )]
@@ -23,7 +23,7 @@ public sealed class DecalTool : ToolMode
 	/// <summary>
 	/// The tool decal selected in the picker.
 	/// </summary>
-	[Property, ResourceSelect( Extension = "ddef", AllowPackages = true ), Title( "#tool.name.decal" )]
+	[Property, ResourceSelect( Extension = "ddef", AllowPackages = true ), Title( "#tool.decal.name" )]
 	public string Decal
 	{
 		get => _decal;
@@ -55,23 +55,23 @@ public sealed class DecalTool : ToolMode
 	/// <summary>
 	/// If enabled, each decal will be applied with random rotation
 	/// </summary>
-	[Property, Title( "#tool.setting.decal_random_rotation" )]
+	[Property, Title( "#tool.decal.setting.random_rotation" )]
 	public bool ApplyRandomRotation { get; set; } = false;
 
 	/// <summary>
 	/// The description shown in the tool picker.
 	/// </summary>
-	public override string Description => "#tool.hint.decaltool.description";
+	public override string Description => "#tool.decal.hint.description";
 
 	/// <summary>
 	/// The rotation hint is pointless when random rotation is enabled, hide it if true
 	/// </summary>
-	public override string ReloadAction => ApplyRandomRotation ? null : "#tool.hint.decaltool.rotate";
+	public override string ReloadAction => ApplyRandomRotation ? null : "#tool.decal.hint.rotate";
 
 	/// <summary>
 	/// Reload and secondary held together scale the decal
 	/// </summary>
-	public override string ReloadSecondaryAction => "#tool.hint.decaltool.scale";
+	public override string ReloadSecondaryAction => "#tool.decal.hint.scale";
 
 	float _rotation;
 	bool _absorbLook;
@@ -84,8 +84,8 @@ public sealed class DecalTool : ToolMode
 	{
 		base.OnStart();
 
-		RegisterAction( ToolInput.Primary, () => "#tool.hint.decaltool.place", OnPlace );
-		RegisterAction( ToolInput.Secondary, () => "#tool.hint.decaltool.paint", OnPaint, InputMode.Down );
+		RegisterAction( ToolInput.Primary, () => "#tool.decal.hint.place", OnPlace );
+		RegisterAction( ToolInput.Secondary, () => "#tool.decal.hint.paint", OnPaint, InputMode.Down );
 	}
 
 	/// <summary>
@@ -309,6 +309,7 @@ public sealed class DecalTool : ToolMode
 	{
 		if ( !FireToolAction( sprayId == 0 ? ToolInput.Primary : ToolInput.Secondary ) ) return;
 
+		if ( Player?.Network.Owner is null ) return;
 		if ( definition?.Decal == null ) return;
 
 		var pos = point.WorldTransform();
@@ -317,7 +318,10 @@ public sealed class DecalTool : ToolMode
 		go.Tags.Add( "removable" );
 		go.WorldPosition = pos.Position + pos.Rotation.Forward * 1f;
 		go.WorldRotation = Rotation.LookAt( -pos.Rotation.Forward );
-		go.SetParent( point.GameObject, true );
+
+		// Static map collision is regenerated on load and its children are omitted from saves.
+		if ( !point.IsWorld )
+			go.SetParent( point.GameObject, true );
 
 		var decal = go.AddComponent<Decal>();
 		decal.Decals = new List<DecalDefinition> { definition.Decal };
@@ -330,7 +334,7 @@ public sealed class DecalTool : ToolMode
 		go.NetworkSpawn();
 		Track( go );
 
-		AddUndoObject( go, sprayId == 0 ? "#tool.name.decal" : "#tool.undo.decal_spray", sprayId );
+		AddUndoObject( go, sprayId == 0 ? "#tool.decal.name" : "#tool.decal.undo.spray", sprayId );
 
 		FirePostToolAction( sprayId == 0 ? ToolInput.Primary : ToolInput.Secondary );
 	}

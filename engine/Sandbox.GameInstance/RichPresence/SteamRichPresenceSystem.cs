@@ -16,17 +16,16 @@ internal sealed class SteamRichPresenceSystem : IRichPresenceSystem
 		if ( _values.TryGetValue( key, out var oldValue ) && oldValue == value )
 			return;
 
-		Steam.SteamFriends().SetRichPresence( key, value );
+		SteamNative.Friends.SetRichPresence( key, value );
 
 		_values[key] = value;
 	}
 
 	void Clear()
 	{
-		var friends = Steam.SteamFriends();
-		if ( friends.IsValid )
+		if ( SteamNative.Friends.IsAvailable() )
 		{
-			friends.ClearRichPresence();
+			SteamNative.Friends.ClearRichPresence();
 		}
 
 		_values.Clear();
@@ -34,7 +33,7 @@ internal sealed class SteamRichPresenceSystem : IRichPresenceSystem
 
 	void IRichPresenceSystem.Poll()
 	{
-		if ( !Steam.SteamFriends().IsValid )
+		if ( !SteamNative.Friends.IsAvailable() )
 			return;
 
 		// Friends' menus group everyone sharing a party_id, and use the rest to label it "X's party 2/16"
@@ -109,17 +108,17 @@ internal sealed class SteamRichPresenceSystem : IRichPresenceSystem
 		}
 		else if ( IGameInstance.Current.Package is Package gamePackage )
 		{
-			if ( Application.MapPackage is Package mapPackage )
+			if ( Application.Map?.Title is { } mapTitle )
 			{
 				// Playing Sandbox - Construct
 				SetValue( "steam_display", "#StatusGameMap" );
-				SetValue( "maptitle", mapPackage.Title );
+				SetValue( "maptitle", mapTitle );
 			}
-			else if ( !string.IsNullOrEmpty( Application.Map ) && Application.Map.EndsWith( ".scene" ) )
+			else if ( Application.Map?.ShortName is { } mapName )
 			{
 				// Playing Sandbox - gm_construct
 				SetValue( "steam_display", "#StatusGameMap" );
-				SetValue( "maptitle", System.IO.Path.GetFileName( Application.Map.Split( '.' )[0] ) );
+				SetValue( "maptitle", mapName );
 			}
 			else
 			{

@@ -76,6 +76,7 @@ public class AppSystem
 	/// </summary>
 	protected static void InstallRenderers()
 	{
+		Application.IsShuttingDown = false;
 		SceneRenderer.EngineHooks.Install();
 	}
 
@@ -195,6 +196,7 @@ public class AppSystem
 
 	public virtual void Shutdown()
 	{
+		Sandbox.Diagnostics.Profiler.Shutdown();
 		startupWindow?.Dispose();
 		startupWindow = null;
 
@@ -233,6 +235,9 @@ public class AppSystem
 		SoundHandle.Shutdown();
 		DedicatedServer.Shutdown();
 
+		if ( SteamApi.SteamClient.IsValid )
+			SteamApi.SteamClient.Cleanup();
+
 		// Game and menu code can keep scenes alive in statics, along with the models and textures they draw
 		Scene.DestroyAll();
 
@@ -258,11 +263,25 @@ public class AppSystem
 		// Release all cached stylesheets — their Styles hold Lazy<Texture> refs
 		UI.StyleSheet.ResetStyleSheets();
 
+		// Prevent static constructors triggered during the teardown sweep below from loading new resources
+		Application.IsShuttingDown = true;
+
 		// Null all static native-resource and Panel references across every assembly loaded
 		// in this AppDomain — catches engine, base addon, menu addon, game dlls, etc.
 		// Only scan assemblies that actually reference the engine assembly; anything that
 		// doesn't reference it can't possibly hold statics of Texture, Panel, etc.
 		var engineAsmName = typeof( Texture ).Assembly.GetName().Name;
+		Type[] teardownTypes =
+		[
+			typeof( Texture ),
+			typeof( GpuBuffer ),
+			typeof( Model ),
+			typeof( Material ),
+			typeof( ComputeShader ),
+			typeof( Rendering.CommandList ),
+			typeof( UI.Panel )
+		];
+
 		foreach ( var asm in AppDomain.CurrentDomain.GetAssemblies() )
 		{
 			// The engine assembly itself always qualifies
@@ -278,13 +297,7 @@ public class AppSystem
 			if ( !isEngineAsm && !isDynamic && !referencesEngine )
 				continue;
 
-			ReflectionUtility.NullStaticReferencesOfType( asm, typeof( Texture ) );
-			ReflectionUtility.NullStaticReferencesOfType( asm, typeof( GpuBuffer ) );
-			ReflectionUtility.NullStaticReferencesOfType( asm, typeof( Model ) );
-			ReflectionUtility.NullStaticReferencesOfType( asm, typeof( Material ) );
-			ReflectionUtility.NullStaticReferencesOfType( asm, typeof( ComputeShader ) );
-			ReflectionUtility.NullStaticReferencesOfType( asm, typeof( Rendering.CommandList ) );
-			ReflectionUtility.NullStaticReferencesOfType( asm, typeof( UI.Panel ) );
+			ReflectionUtility.NullStaticReferencesOfTypes( asm, teardownTypes );
 		}
 
 		Material.Shutdown();
@@ -344,6 +357,11 @@ public class AppSystem
 		Graphics.Shutdown();
 		WindowInput.Shutdown();
 		SdlGamepads.Shutdown();
+
+		// No task continuation runs from here on: one left queued (a menu's Workshop query, say) would run in a later
+		// wait on this thread, the runtime's own at exit included, after the native dlls are unloaded
+		Tasks.SyncContext.Shutdown();
+
 		NativeEngine.EngineGlobal.SourceEngineShutdown( _appSystem, false );
 		// Qt window destruction during PreShutdown can enqueue more frame-end cleanup.
 		EngineLoop.DrainFrameEndDisposables();
@@ -461,7 +479,7 @@ public class AppSystem
 		gameWindow?.InitializeRendering();
 		gameWindow?.UpdateStartupProgress( 0.22f, "Loading shaders" );
 		Bootstrap.Init();
-		gameWindow?.UpdateStartupProgress( 0.4f, "Building the menu" );
+		gameWindow?.UpdateStartupProgress( 0.4f, Application.IsStandalone ? "Loading the game" : "Building the menu" );
 	}
 
 	protected void SetWindowTitle( string title )

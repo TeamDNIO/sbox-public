@@ -1,10 +1,8 @@
 namespace Nav.Build;
 
-/// <summary>
-/// Walks the outline of every region, simplifies it and joins the holes of a region to its outline.
-/// A vertex is four ints: x, y, height, flags. After Build the flags hold the region on the other side
-/// of the edge that starts at the vertex, plus BorderVertex and AreaBorder.
-/// </summary>
+// Walks the outline of every region, simplifies it and joins the holes of a region to its outline.
+// A vertex is four ints: x, y, height, flags. After Build the flags hold the region on the other side
+// of the edge that starts at the vertex, plus BorderVertex and AreaBorder.
 internal sealed class ContourBuilder
 {
 	public const int RegionMask = 0xFFFF;
@@ -48,16 +46,13 @@ internal sealed class ContourBuilder
 	static readonly Comparison<Hole> holeOrder = static ( a, b ) => a.MinX == b.MinX ? a.MinY.CompareTo( b.MinY ) : a.MinX.CompareTo( b.MinX );
 	static readonly Comparison<Diagonal> diagonalOrder = static ( a, b ) => a.Distance.CompareTo( b.Distance );
 
-	/// <summary>
-	/// Runs on the regions RegionBuilder.Build left in the field, with the same open blocks and border.
-	/// Vertices come out in cells from the corner of the field without its border.
-	/// </summary>
+	// Runs on the regions RegionBuilder.Build left in the field, with the same open blocks and border.
+	// Vertices come out in cells from the corner of the field without its border.
 	public bool Build( CompactField field, OpenBlocks open, int border, float maxError, int maxEdgeLength, out string? error )
 	{
 		int w = field.Width;
 		int x1 = w - border, y1 = field.Height - border;
 		var index = field.Index;
-		var con = field.Con;
 		var region = field.Region;
 
 		Count = 0;
@@ -82,12 +77,15 @@ internal sealed class ContourBuilder
 				{
 					int i = index[x + row];
 					int r = region[i];
+					int south = index[x + row - w], north = index[x + row + w];
 					if ( CompactField.All( region, i, r ) && region[i - 1] == r && region[i + blockSize] == r
-						&& CompactField.All( region, index[x + row - w], r ) && CompactField.All( region, index[x + row + w], r ) )
+						&& CompactField.All( region, south, r ) && CompactField.All( region, north, r ) )
 					{
 						Array.Clear( flags, i, blockSize );
 						continue;
 					}
+					FlagOpenColumns( region, x + row, i, south, north );
+					continue;
 				}
 
 				FlagColumns( field, x + row, end + row );
@@ -172,6 +170,36 @@ internal sealed class ContourBuilder
 				starts[startCount * 2 + 1] = column;
 				startCount++;
 			}
+		}
+	}
+
+	// FlagColumns over an open block, whose spans have their neighbours just before and after them and at the same
+	// place in the rows south and north.
+	void FlagOpenColumns( ushort[] region, int column, int first, int south, int north )
+	{
+		for ( int k = 0; k < CompactField.BlockSize; k++ )
+		{
+			int i = first + k;
+			int r = region[i];
+			if ( r == 0 || (r & RegionBuilder.Border) != 0 )
+			{
+				flags[i] = 0;
+				continue;
+			}
+
+			int same = 0;
+			if ( region[i - 1] == r ) same |= 1;
+			if ( region[north + k] == r ) same |= 2;
+			if ( region[i + 1] == r ) same |= 4;
+			if ( region[south + k] == r ) same |= 8;
+
+			flags[i] = same == 0 ? (byte)0 : (byte)(same ^ 0xF);
+			if ( same == 0 || same == 0xF ) continue;
+
+			if ( startCount * 2 == starts.Length ) Array.Resize( ref starts, starts.Length * 2 );
+			starts[startCount * 2] = i;
+			starts[startCount * 2 + 1] = column + k;
+			startCount++;
 		}
 	}
 

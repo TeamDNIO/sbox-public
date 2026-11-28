@@ -275,16 +275,22 @@ public sealed partial class SceneCamera : IDisposable, IManagedCamera
 
 	/// <summary>
 	/// The screen-space reflections this camera's views render: part of every camera, or null when the graphics settings
-	/// turn them off (<see cref="ScreenSpaceReflectionsPass.IsEnabled"/>).
+	/// turn them off (<see cref="ScreenSpaceReflectionsPass.IsEnabled"/>) or the camera goes without them.
 	/// </summary>
-	internal ScreenSpaceReflectionsPass ScreenSpaceReflections => ScreenSpaceReflectionsPass.IsEnabled ? _reflections : null;
+	internal ScreenSpaceReflectionsPass ScreenSpaceReflections => ScreenSpaceReflectionsPass.IsEnabled && WantsScreenSpaceReflections ? _reflections : null;
+
+	/// <summary>
+	/// False for cameras that shouldn't trace reflections, like a <see cref="UI.ScenePanel"/>'s: UI previews are often drawn
+	/// once, so have no history to trace against, and their transparent backgrounds reflect as black.
+	/// </summary>
+	internal bool WantsScreenSpaceReflections { get; set; } = true;
 
 	/// <summary>
 	/// Make the pass while reflections are on. On the main thread: it makes its shaders here, which a render job can't.
 	/// </summary>
 	internal void UpdateScreenSpaceReflections()
 	{
-		if ( ScreenSpaceReflectionsPass.IsEnabled )
+		if ( ScreenSpaceReflectionsPass.IsEnabled && WantsScreenSpaceReflections )
 			_reflections ??= new();
 	}
 
@@ -667,6 +673,7 @@ public sealed partial class SceneCamera : IDisposable, IManagedCamera
 	/// </summary>
 	internal void OnPreRender( Vector2 size )
 	{
+		using var cpu = CpuPreRender.Start();
 		Size = size;
 
 		ConfigureView( default );
@@ -735,6 +742,11 @@ public sealed partial class SceneCamera : IDisposable, IManagedCamera
 
 	void ApplyAntiAliasing()
 	{
+		// Cube captures (envmaps, DDGI) render as fast as possible. CMAA2 would also read every face from the cube's first.
+		var sceneView = Graphics.SceneView;
+		if ( sceneView.IsValid && sceneView.GetRenderTargetArrayIndex() >= 0 )
+			return;
+
 		if ( !DisableAntiAliasing
 			&& RenderSettings.Instance.AntiAliasMode == AntiAliasMode.Cmaa2
 			&& Graphics.ToolsVisMode == (int)SceneCameraDebugMode.Normal )
@@ -946,8 +958,13 @@ public sealed partial class SceneCamera : IDisposable, IManagedCamera
 		return VRSystem.IsActive && TargetEye > StereoTargetEye.None;
 	}
 
+	static readonly ProfileScope CpuPreRender = new( "Camera.PreRender" );
+	static readonly ProfileScope CpuRender = new( "Camera.Render" );
+	static readonly ProfileScope CpuRenderToTexture = new( "Camera.RenderToTexture" );
+
 	private void Render( SwapChainHandle_t swapChain, Vector2? size, in ViewSetup config = default )
 	{
+		using var cpu = CpuRender.Start();
 		if ( swapChain.self == default )
 			return;
 
@@ -965,6 +982,7 @@ public sealed partial class SceneCamera : IDisposable, IManagedCamera
 
 	internal void RenderToTexture( Texture texture, Vector2? size, in ViewSetup config )
 	{
+		using var cpu = CpuRenderToTexture.Start();
 		if ( texture is null || texture.native.IsNull )
 			return;
 

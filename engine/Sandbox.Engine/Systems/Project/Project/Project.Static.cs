@@ -220,11 +220,9 @@ public partial class Project
 
 		var vscodePath = Path.Combine( projectPath, ".vscode" );
 
-		Directory.CreateDirectory( vscodePath );
-
 		// Recommend C# Dev Kit and Slang extensions
 		var extensions = new VSCodeExtensions { Recommendations = ["ms-dotnettools.csdevkit", "shader-slang.slang-language-extension"] };
-		File.WriteAllText( Path.Combine( vscodePath, "extensions.json" ), JsonSerializer.Serialize( extensions, JsonWriteIndented ) );
+		WriteVsCodeFile( vscodePath, "extensions.json", JsonSerializer.Serialize( extensions, JsonWriteIndented ) );
 
 		// Associate file extensions (defaults to Unity ShaderLab) and set up Slang search paths
 		var settings = new VSCodeSettings
@@ -242,7 +240,29 @@ public partial class Project
 		settings.SlangIncludePaths = [.. shaderSearchPaths];
 		settings.SlangWorkspaceFlavor = "vfx";
 
-		File.WriteAllText( Path.Combine( vscodePath, "settings.json" ), JsonSerializer.Serialize( settings, JsonWriteIndented ) );
+		WriteVsCodeFile( vscodePath, "settings.json", JsonSerializer.Serialize( settings, JsonWriteIndented ) );
+	}
+
+	/// <summary>
+	/// Refresh an optional workspace file when its contents change. A locked file can wait until the next refresh.
+	/// </summary>
+	static void WriteVsCodeFile( string directory, string filename, string contents )
+	{
+		var path = Path.Combine( directory, filename );
+
+		try
+		{
+			Directory.CreateDirectory( directory );
+
+			if ( File.Exists( path ) && File.ReadAllText( path ) == contents )
+				return;
+
+			File.WriteAllText( path, contents );
+		}
+		catch ( Exception e ) when ( e is IOException or UnauthorizedAccessException )
+		{
+			Log.Warning( $"Couldn't update {path}: {e.Message}" );
+		}
 	}
 
 	/// <summary>
@@ -312,9 +332,15 @@ public partial class Project
 		}
 	}
 
+	/// <summary>
+	/// A folder as the native filesystem's search paths name it: lowercased where the disk ignores case, as it is on
+	/// Linux, where lowercasing names another folder (".../Assets" isn't ".../assets").
+	/// </summary>
+	internal static string NativeSearchPath( string path ) => OperatingSystem.IsLinux() ? path : path.ToLowerInvariant();
+
 	private void StartCompilation()
 	{
-		NativeEngine.FullFileSystem.AddProjectPath( ConfigFilePath, GetAssetsPath().ToLowerInvariant() );
+		NativeEngine.FullFileSystem.AddProjectPath( ConfigFilePath, NativeSearchPath( GetAssetsPath() ) );
 
 		// What the editor's put on disk for it - the cloud assets its own use, and generated files - found from there as
 		// they are in the editor, rather than nowhere

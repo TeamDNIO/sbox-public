@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
+using Sandbox.Diagnostics;
 using Sandbox.Internal;
 using Sandbox.Mapping;
 using Sandbox.Network;
@@ -38,6 +39,137 @@ public class NetworkTest
 		{
 			Game.ActiveScene?.Destroy();
 			Game.ActiveScene = _oldActiveScene;
+		}
+	}
+
+	/// <summary>
+	/// Interrupt an initial snapshot at each stage and check which callbacks the client ran.
+	/// </summary>
+	[TestMethod]
+	[DataRow( "current", 7 )]
+	[DataRow( "leaving", 0 )]
+	[DataRow( "OnDestroy", 1 )]
+	[DataRow( "receive", 2 )]
+	[DataRow( "restart", 2 )]
+	[DataRow( "cancel", 2 )]
+	[DataRow( "OnLoadingFinished", 2 )]
+	[DataRow( "AfterLoad", 3 )]
+	[DataRow( "OnStart", 4 )]
+	[DataRow( "reapply", 5 )]
+	[DataRow( "SceneLoaded", 6 )]
+	[DataRow( "OnClientInitialize", 7 )]
+	public void InitialSnapshotStartup( string scenario, int expectedStages )
+	{
+		var outgoingScene = new Scene();
+		using var scope = outgoingScene.Push();
+		using var peers = new ClientAndHost( TypeLibrary );
+		peers.BecomeHost();
+		var obj = new GameObject();
+		var outgoing = obj.Components.Create<SnapshotStartupProbe>();
+		outgoing.SnapshotValue = true;
+		obj.NetworkSpawn( null );
+
+		var snapshot = SnapshotMsg.Create();
+		SceneNetworkSystem.Instance.GetSnapshot( null, ref snapshot );
+		peers.BecomeClient();
+		using var mainThread = Sandbox.Tasks.SyncContext.Scope( Sandbox.Tasks.SyncContext.MainThread );
+
+		var previousTitle = LoadingScreen.Title;
+		var previousInstance = IGameInstance.Current;
+		var previousSceneName = GameNetworkSystem.CurrentSceneName;
+		var wasPlaying = Game.IsPlaying;
+		string[] stages = ["OnDestroy", "receive", "AfterLoad", "OnStart", "reapply", "SceneLoaded", "OnClientInitialize"];
+		var observed = new List<string>();
+		Scene replacement = null;
+		bool loggedCancellation = false;
+
+		void OnStage( string stage )
+		{
+			observed.Add( stage );
+			if ( stage != scenario )
+				return;
+
+			Networking.Disconnect();
+			if ( stage == "OnStart" )
+				peers.BecomeHost();
+
+			if ( stage == "OnDestroy" )
+				Game.ActiveScene = replacement = new Scene();
+
+			GameNetworkSystem.CurrentSceneName = "replacement scene";
+			LoadingScreen.Title = "replacement load";
+		}
+
+		void OnLog( LogEvent entry )
+		{
+			if ( entry.Exception is OperationCanceledException )
+				loggedCancellation = true;
+		}
+
+		Logging.OnEmitted += OnLog;
+		SnapshotStartupProbe.OnStage = ( probe, stage ) =>
+		{
+			// The outgoing scene and its network copy share ids. Only the outgoing destruction starts the load.
+			if ( probe.Id == outgoing.Id && (stage != "OnDestroy" || probe == outgoing) )
+				OnStage( stage );
+		};
+		try
+		{
+			Game.IsPlaying = false;
+			if ( scenario == "OnLoadingFinished" )
+				IGameInstance.Current = new RestartOnLoadingFinished();
+
+			peers.Client.State = Connection.ChannelState.MountVPKs;
+			peers.Client.HandshakeId = Guid.NewGuid();
+			Networking.System.IsDisconnecting = scenario == "leaving";
+			var msg = new InitialSnapshotResponse { HandshakeId = peers.Client.HandshakeId, Snapshot = snapshot };
+			var loading = Networking.System.On_Handshake_Snapshot( msg, peers.Host, default );
+
+			var scene = Game.ActiveScene;
+			using var hook = scene?.AddHook( GameObjectSystem.Stage.SceneLoaded, 0, () => OnStage( "SceneLoaded" ), nameof( InitialSnapshotStartup ), "" );
+
+			if ( scenario is "restart" or "cancel" )
+				Networking.System.RestartHandshake();
+
+			if ( scenario == "cancel" )
+				scene.Enabled = false;
+
+			Sandbox.Tasks.SyncContext.RunBlocking( loading.WaitAsync( TimeSpan.FromSeconds( 5 ) ) );
+
+			CollectionAssert.AreEqual( stages[..expectedStages], observed, string.Join( ", ", observed ) );
+			Assert.AreEqual( scenario == "current", Game.IsPlaying );
+			Assert.AreEqual( scenario == "current", peers.Host.Messages.Any( x => x.Payload is ClientReady ) );
+			Assert.IsFalse( loggedCancellation );
+
+			if ( scenario == "receive" )
+				Assert.IsNull( scene.Directory.FindSystemByGuid( snapshot.GameObjectSystems.First().Id ), "A stale snapshot must not install the host's system IDs." );
+
+			if ( scenario == "OnLoadingFinished" )
+				Assert.IsTrue( peers.Host.Messages.Any( x => x.Payload is RestartHandshakeMsg ) );
+
+			if ( replacement is not null )
+				Assert.AreSame( replacement, Game.ActiveScene );
+
+			if ( stages.Contains( scenario ) )
+			{
+				Assert.AreEqual( "replacement scene", GameNetworkSystem.CurrentSceneName );
+				Assert.AreEqual( "replacement load", LoadingScreen.Title );
+			}
+		}
+		finally
+		{
+			SnapshotStartupProbe.OnStage = null;
+			IGameInstance.Current = previousInstance;
+			if ( outgoingScene.IsValid() )
+				outgoingScene.Destroy();
+
+			if ( replacement.IsValid() && replacement != Game.ActiveScene )
+				replacement.Destroy();
+
+			Logging.OnEmitted -= OnLog;
+			LoadingScreen.Title = previousTitle;
+			GameNetworkSystem.CurrentSceneName = previousSceneName;
+			Game.IsPlaying = wasPlaying;
 		}
 	}
 
@@ -198,6 +330,9 @@ public class NetworkTest
 		Assert.IsTrue( local.Scale.AlmostEqual( expected.Scale ), $"Scale was {local.Scale}" );
 	}
 
+	/// <summary>
+	/// Action and physical key taps, aim, and mouse deltas reach the host through client ticks.
+	/// </summary>
 	[TestMethod]
 	public void NetworkedInput()
 	{
@@ -215,6 +350,16 @@ public class NetworkTest
 
 		Input.InputSettings = inputSettings;
 		Input.SetAction( "Jump", true );
+		Input.OnButton( NativeEngine.ButtonCode.KEY_K, "k", true );
+		Input.OnButton( NativeEngine.ButtonCode.KEY_K, "k", false );
+		var camera = Game.ActiveScene.CreateObject().Components.Create<CameraComponent>();
+		camera.WorldRotation = Rotation.FromYaw( 90 );
+		var movement = new Vector2( 2, 3 );
+		var wheel = new Vector2( 0.75f, -0.75f );
+		Input.AddMouseMovement( new Vector2( 3, -2 ) );
+		Input.AddMouseWheel( new Vector2( 0.25f, -1 ) );
+		Input.AddMouseMovement( new Vector2( -1, 5 ) );
+		Input.AddMouseWheel( new Vector2( 0.5f, 0.25f ) );
 
 		// Send a client tick - this will build a user command as well
 		Game.ActiveScene.SendClientTick( SceneNetworkSystem.Instance );
@@ -233,11 +378,20 @@ public class NetworkTest
 
 		Assert.AreEqual( true, clientAndHost.Client.Pressed( "Jump" ) );
 		Assert.AreEqual( true, clientAndHost.Client.Down( "Jump" ) );
+		Assert.IsTrue( clientAndHost.Client.KeyPressed( "k" ) );
+		Assert.IsTrue( clientAndHost.Client.KeyDown( "k" ) );
+		Assert.AreEqual( camera.WorldRotation.Angles(), clientAndHost.Client.AimAngles );
+		Assert.AreEqual( movement, clientAndHost.Client.MouseDelta );
+		Assert.AreEqual( wheel, clientAndHost.Client.MouseWheel );
 
 		// Become the client
 		clientAndHost.BecomeClient();
 
 		Input.ClearActions();
+		camera.Enabled = false;
+		Input.AddMouseMovement( -movement );
+		Input.AddMouseWheel( -wheel );
+		Assert.AreEqual( camera.WorldRotation.Angles(), Connection.Local.AimAngles );
 
 		// Send a client tick - this will build a user command as well
 		Game.ActiveScene.SendClientTick( SceneNetworkSystem.Instance );
@@ -256,6 +410,11 @@ public class NetworkTest
 
 		Assert.AreEqual( true, clientAndHost.Client.Released( "Jump" ) );
 		Assert.AreEqual( false, clientAndHost.Client.Down( "Jump" ) );
+		Assert.IsTrue( clientAndHost.Client.KeyReleased( "k" ) );
+		Assert.IsFalse( clientAndHost.Client.KeyDown( "k" ) );
+		Assert.IsNull( clientAndHost.Client.AimAngles );
+		Assert.AreEqual( -movement, clientAndHost.Client.MouseDelta );
+		Assert.AreEqual( -wheel, clientAndHost.Client.MouseWheel );
 
 		// Let's test wrap-aware command number processing
 		var userCommand = new UserCommand( uint.MaxValue );
@@ -282,6 +441,8 @@ public class NetworkTest
 		} );
 
 		Assert.AreEqual( false, clientAndHost.Client.Pressed( "Forward" ) );
+		Assert.AreEqual( Vector2.Zero, clientAndHost.Client.MouseDelta );
+		Assert.AreEqual( Vector2.Zero, clientAndHost.Client.MouseWheel );
 		Assert.AreEqual( true, clientAndHost.Client.Pressed( "Jump" ) );
 		Assert.AreEqual( true, clientAndHost.Client.Down( "Jump" ) );
 
@@ -293,6 +454,57 @@ public class NetworkTest
 
 		// Don't leak pressed input state into later tests
 		Input.ClearActions();
+	}
+
+	/// <summary>
+	/// Controller axis movement and release travel through the normal client tick.
+	/// </summary>
+	[TestMethod]
+	public void NetworkedAnalogInput()
+	{
+		using var scope = new Scene().Push();
+		using var peers = new ClientAndHost( TypeLibrary );
+		var scene = Game.ActiveScene;
+		var suppressed = Input.Suppressed;
+		var usingController = Input.UsingController;
+		var controllers = Controller.All.ToArray();
+
+		try
+		{
+			Input.Suppressed = false;
+			Controller.All.Clear();
+			var controller = new Controller( 4096 );
+			controller.SetAxis( GameControllerAxis.LeftX, -16384 );
+			Controller.All.Add( controller );
+			Input.UsingController = true;
+
+			peers.BecomeClient();
+			var expectedAxis = Connection.Local.GetAnalog( InputAnalog.LeftStickX );
+			Assert.IsTrue( expectedAxis < -0.4f );
+			scene.SendClientTick( SceneNetworkSystem.Instance );
+			peers.BecomeHost();
+			peers.Host.ProcessMessages( InternalMessageType.ClientTick, bs => Networking.System.OnReceiveClientTick( bs, peers.Client ) );
+			peers.Host.Messages.Clear();
+			peers.Client.Messages.Clear();
+
+			Assert.AreEqual( expectedAxis, peers.Client.GetAnalog( InputAnalog.LeftStickX ), 0.00004f );
+
+			// Return the axis to neutral.
+			peers.BecomeClient();
+			controller.SetAxis( GameControllerAxis.LeftX, 0 );
+			scene.SendClientTick( SceneNetworkSystem.Instance );
+			peers.BecomeHost();
+			peers.Host.ProcessMessages( InternalMessageType.ClientTick, bs => Networking.System.OnReceiveClientTick( bs, peers.Client ) );
+			Assert.AreEqual( 0f, peers.Client.GetAnalog( InputAnalog.LeftStickX ) );
+		}
+		finally
+		{
+			Controller.All.Clear();
+			Controller.All.UnionWith( controllers );
+			Input.UsingController = usingController;
+			Input.Suppressed = suppressed;
+			scene.Destroy();
+		}
 	}
 
 	[TestMethod]
@@ -972,6 +1184,48 @@ public class NetworkTest
 		}
 	}
 
+	/// <summary>
+	/// A cancelled scene change is a load failure while its network session is live.
+	/// During or after disconnect it should finish quietly, even if another session is current.
+	/// </summary>
+	[TestMethod]
+	[DataRow( false, false, DisplayName = "Active session" )]
+	[DataRow( true, false, DisplayName = "Shutting down" )]
+	[DataRow( false, true, DisplayName = "Disconnected and replaced" )]
+	public void SceneChangeSnapshotCancellation( bool disconnecting, bool replaced )
+	{
+		using var scope = new Scene().Push();
+		using var peers = new ClientAndHost( TypeLibrary );
+		peers.BecomeClient();
+
+		using var mainThread = Sandbox.Tasks.SyncContext.Scope( Sandbox.Tasks.SyncContext.MainThread );
+		var previousTasks = LoadingScreen.Tasks.ToList();
+		using var restoreTasks = new Sandbox.Utility.DisposeAction( () => LoadingScreen.UpdateLoadingTasks( previousTasks ) );
+
+		var msg = new LoadSceneSnapshotMsg { Snapshot = SnapshotMsg.Create() };
+		var handling = SceneNetworkSystem.Instance.OnLoadSceneSnapshotMsg( msg, peers.Host, default );
+
+		// Keep WaitForLoading inside WhenAny until we cancel the scene's task source.
+		var scene = Game.ActiveScene;
+		scene.AddLoadingTask( new LoadingContext { Task = new TaskCompletionSource().Task } );
+		Sandbox.Tasks.SyncContext.MainThread.ProcessQueue();
+		Assert.IsFalse( handling.IsCompleted );
+
+		using var disconnect = disconnecting ? Networking.DisconnectScope() : null;
+		if ( replaced )
+		{
+			Networking.Disconnect();
+			peers.BecomeHost();
+		}
+
+		scene.Enabled = false;
+		Sandbox.Tasks.SyncContext.RunBlocking( handling.WaitAsync( TimeSpan.FromSeconds( 5 ) ) );
+
+		var expected = disconnecting || replaced ? TaskStatus.RanToCompletion : TaskStatus.Canceled;
+		Assert.AreEqual( expected, handling.Status );
+		Assert.IsFalse( peers.Host.Messages.Any( x => x.Payload is SceneLoadedMsg ) );
+	}
+
 	[TestMethod]
 	public async Task NetworkedMeshSurvivesLateJoinSnapshot()
 	{
@@ -1361,6 +1615,43 @@ public class NetworkTest
 		peers.Client.Messages.Clear();
 		go.Network.Refresh( component );
 		Assert.IsTrue( peers.Client.Messages.Any( x => x.Payload is ObjectRefreshComponentMsg ) );
+	}
+
+	private sealed class RestartOnLoadingFinished() : GameInstance( "test.game", default ), IGameInstance
+	{
+		void IGameInstance.OnLoadingFinished() => Networking.System.RestartHandshake();
+	}
+
+	private sealed class SnapshotStartupProbe : Component, ISceneLoadingEvents, ISceneStartup
+	{
+		internal static Action<SnapshotStartupProbe, string> OnStage;
+		private bool _snapshotValue;
+
+		/// <summary>
+		/// The host's value is restored after OnStart overwrites it on the client.
+		/// </summary>
+		[Sync]
+		public bool SnapshotValue
+		{
+			get => _snapshotValue;
+			set
+			{
+				_snapshotValue = value;
+				OnStage?.Invoke( this, StartCalled ? "reapply" : "receive" );
+			}
+		}
+
+		protected override void OnDestroy() => OnStage?.Invoke( this, nameof( OnDestroy ) );
+
+		protected override void OnStart()
+		{
+			_snapshotValue = false;
+			OnStage?.Invoke( this, nameof( OnStart ) );
+		}
+
+		void ISceneLoadingEvents.AfterLoad( Scene scene ) => OnStage?.Invoke( this, nameof( ISceneLoadingEvents.AfterLoad ) );
+
+		void ISceneStartup.OnClientInitialize() => OnStage?.Invoke( this, nameof( ISceneStartup.OnClientInitialize ) );
 	}
 
 	private class SerializationProbe : Component

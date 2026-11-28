@@ -83,14 +83,18 @@ public static partial class MenuUtility
 
 	/// <summary>
 	/// Games on the Workshop, a page at a time - for a list that loads more as it's
-	/// scrolled. With <paramref name="mine"/>, just what you've published - friends only and private too.
+	/// scrolled. With <paramref name="mine"/>, just what you've published - friends only and private too. With
+	/// <paramref name="subscribed"/>, just the ones you're subscribed to.
 	/// </summary>
-	public static WorkshopItemSearch SearchWorkshopGames( string search = null, Sandbox.Storage.SortOrder? sort = null, IEnumerable<string> tags = null, bool mine = false )
+	public static WorkshopItemSearch SearchWorkshopGames( string search = null, Sandbox.Storage.SortOrder? sort = null, IEnumerable<string> tags = null, bool mine = false, bool subscribed = false )
 	{
 		var query = new Workshop.Query( search ).WithType( Workshop.ItemType.Game );
 
 		if ( mine )
 			query.WithAuthor( Game.SteamId );
+
+		if ( subscribed )
+			query.WithSubscribed();
 
 		foreach ( var tag in tags ?? [] )
 			query.WithTag( tag );
@@ -130,10 +134,44 @@ public static partial class MenuUtility
 	}
 
 	/// <summary>
-	/// What a game's loaded with to start on this Workshop map (<see cref="LaunchArguments.Map"/>). Null if it can't
-	/// be.
+	/// The Workshop item ID the map chooser passes to <see cref="LaunchArguments.Map"/>. Null for a missing item.
 	/// </summary>
-	public static string LaunchMapOf( WorkshopItemDetails map ) => map?.KeyValues.GetValueOrDefault( "package" );
+	public static string LaunchMapOf( WorkshopItemDetails map ) => map is { Id: > 0 } ? map.Id.ToString() : null;
+
+	/// <summary>
+	/// Swaps a map's package ident for the Workshop item ID it's published as. Anything else comes back as it is.
+	/// </summary>
+	public static async Task<string> ResolveMapAsync( string map ) => (await MapReference.ResolveAsync( map )).Text;
+
+	/// <summary>
+	/// A map's name and picture, from its local project, its Workshop item or the mounted game it's in. The picture is
+	/// a URL or a texture. Looking up these details does not install the map.
+	/// </summary>
+	public static async Task<(string Title, string Thumb, Texture Thumbnail)> FetchMapDetailsAsync( string map )
+	{
+		var details = await LookupMapAsync( map );
+		return (details.Title, details.Thumb, details.Thumbnail);
+	}
+
+	/// <summary>
+	/// Resolve a menu selection and get its display details without installing it.
+	/// </summary>
+	public static async Task<(string Map, string Title, string Thumb, Texture Thumbnail)> LookupMapAsync( string map )
+	{
+		var reference = await MapReference.ResolveAsync( map );
+		var info = await reference.GetInfoAsync();
+		return (reference.Text, info.Title, info.Thumb, info.Thumbnail);
+	}
+
+	/// <summary>
+	/// The registered map project a map loads from, or null. It's found by the Workshop item it's published as, or by its identifier.
+	/// </summary>
+	public static Package FindMapProject( string map ) => new MapReference( map ).LocalProject;
+
+	/// <summary>
+	/// The Workshop item a map string names, or 0 if it isn't one.
+	/// </summary>
+	public static ulong GetMapWorkshopId( string map ) => ulong.TryParse( map, out var id ) ? id : 0;
 
 	/// <summary>
 	/// The tags a game can be found by - what it is, as its publisher picked

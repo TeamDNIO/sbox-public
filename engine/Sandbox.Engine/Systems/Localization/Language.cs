@@ -34,31 +34,38 @@ public class LanguageContainer
 	}
 
 	string _previousLanguage;
+	Localization.PhraseCollection _previousFallback;
+	static Localization.PhraseCollection GameFallback => Game.IsMenu ? GlobalContext.Game.Language?.lang : null;
 
 	internal void Tick()
 	{
-		var language = Application.LanguageCode;
+		var language = (SelectedCode ?? "en").ToLowerInvariant();
+		var fallback = GameFallback;
 
-		language ??= "en";
-		language = language.ToLower();
+		if ( _previousLanguage != language )
+		{
+			_previousLanguage = language;
 
-		if ( _previousLanguage == language )
+			lang = new Localization.PhraseCollection();
+			var resources = ResourceLibrary.GetAll<LanguageResource>().OrderBy( x => x.ResourcePath, StringComparer.Ordinal ).ToArray();
+			AddLanguage( "en", resources );
+
+			if ( language != "en" )
+			{
+				AddLanguage( language, resources );
+			}
+		}
+		else if ( _previousFallback == fallback )
+		{
 			return;
+		}
 
-		_previousLanguage = language;
-
-		// Add english first for fallbacks
-		lang = new Localization.PhraseCollection();
-		AddFromPath( "en" );
-
-		// Switch to new language
-		AddFromPath( language );
-
-		// Notify UI system so we can update text if needed
+		// A game catalog reload or unload also invalidates translated menu labels.
+		_previousFallback = fallback;
 		GlobalContext.Current.UISystem.OnLanguageChanged();
 	}
 
-	void AddFromPath( string shortName )
+	void AddLanguage( string shortName, LanguageResource[] resources )
 	{
 		if ( string.IsNullOrWhiteSpace( shortName ) ) return;
 		if ( shortName.Contains( "." ) ) return;
@@ -68,12 +75,15 @@ public class LanguageContainer
 		var language = Sandbox.Localization.Languages.Find( shortName );
 		if ( language != null ) Current = language;
 
-
 		foreach ( var file in FileSystem.FindFile( shortName, "*.json" ) )
 		{
 			AddFile( $"{shortName}/{file}" );
 		}
 
+		foreach ( var resource in resources )
+		{
+			resource.AddPhrases( shortName, lang );
+		}
 	}
 
 	void AddFile( string path )
@@ -117,6 +127,12 @@ public class LanguageContainer
 
 		return lang.GetPhrase( textToken, data );
 	}
+
+	/// <summary>
+	/// Resolves a UI token in the current catalog, with game phrases available to the menu on a miss.
+	/// </summary>
+	internal static string GetUiPhrase( string token )
+		=> Language.DisplayKeys ? token : Localization.PhraseCollection.Resolve( token, Game.Language?.lang, GameFallback );
 
 	internal void Shutdown()
 	{

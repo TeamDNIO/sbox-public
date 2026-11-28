@@ -171,12 +171,16 @@ namespace Sandbox.UI
 			{
 				value ??= "";
 
-				if ( Tokenize && value != null && value.Length > 1 && value[0] == '#' )
+				if ( Tokenize && value.Length > 1 && value[0] == '#' )
 				{
 					if ( _textToken == value ) return;
 					_textToken = value;
 
-					value = Language.GetPhrase( _textToken[1..] );
+					value = LanguageContainer.GetUiPhrase( _textToken[1..] );
+				}
+				else
+				{
+					_textToken = null;
 				}
 
 				if ( _text == value )
@@ -283,7 +287,7 @@ namespace Sandbox.UI
 		}
 
 		/// <summary>
-		/// Returns the selected text.
+		/// Returns the selected text, or an empty string if the selection contains no text elements.
 		/// </summary>
 		public string GetSelectedText()
 		{
@@ -294,6 +298,9 @@ namespace Sandbox.UI
 
 			var s = Math.Min( SelectionStart, SelectionEnd );
 			var e = Math.Max( SelectionStart, SelectionEnd );
+
+			// Clamping can collapse a drag selection at the end, past the last text element.
+			if ( s == e ) return "";
 
 			return StringInfo.SubstringByTextElements( s, e - s );
 		}
@@ -322,16 +329,10 @@ namespace Sandbox.UI
 		{
 			base.PreLayout( cascade );
 
-			string styleContent = null;
-
-			if ( ComputedStyle.Content != null )
+			var styleContent = ComputedStyle.Content;
+			if ( styleContent is { Length: > 1 } && styleContent[0] == '#' )
 			{
-				styleContent = ComputedStyle.Content;
-
-				if ( styleContent.Length > 1 && styleContent[0] == '#' )
-				{
-					styleContent = Language.GetPhrase( styleContent[1..] );
-				}
+				styleContent = LanguageContainer.GetUiPhrase( styleContent[1..] );
 			}
 
 			var text = styleContent ?? Text ?? string.Empty;
@@ -549,8 +550,15 @@ namespace Sandbox.UI
 		/// </summary>
 		public override void LanguageChanged()
 		{
-			if ( _textToken == null ) return;
-			if ( !Tokenize ) return;
+			base.LanguageChanged();
+
+			if ( ComputedStyle?.Content?.StartsWith( '#' ) == true )
+			{
+				LayoutTree?.MarkDirty();
+				SetNeedsPreLayout();
+			}
+
+			if ( _textToken == null || !Tokenize ) return;
 
 			var token = _textToken;
 			_textToken = null; // skip cache

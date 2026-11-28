@@ -54,17 +54,8 @@ internal partial class StandaloneGameInstance : GameInstance
 		LoadingScreen.Title = $"Loading {Package.Title}";
 		try
 		{
-			// Load the package. Mount it and add it to the file system.
-			// Only load the assemblies inside the package if we're not a developer host
-			// (If we're a develop host we load assemblies from the network table)
-			if ( !enroller.LoadPackage( Package.FullIdent, !IsDeveloperHost ) )
-			{
-				if ( IsDeveloperHost )
-					return true;
-
-				Log.Warning( "There were errors when trying to load the package for the menu" );
-				return false;
-			}
+			// Developer sessions enroll assemblies received from the host.
+			enroller.LoadPackage( Package.FullIdent, !IsDeveloperHost );
 		}
 		catch ( System.Exception e )
 		{
@@ -122,6 +113,9 @@ internal partial class StandaloneGameInstance : GameInstance
 				_packageAssembly = loaded.Assembly;
 			}
 		}
+
+		// Its code and content are in, so its own loading screen can cover the rest
+		StandaloneLoadingScene.Path = Package.GetMeta<string>( "LoadingScene", null );
 
 		return true;
 	}

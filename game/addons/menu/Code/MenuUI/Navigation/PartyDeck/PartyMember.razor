@@ -7,7 +7,7 @@
 
 <root class="@(IsTalking ? "talking" : "") @StatusClass" tooltip=@StatusTooltip>
 
-	@* No status ring - everyone here's in s&box. The only ring in the deck means talking *@
+	@* No status ring - everyone here's in s&box *@
 	<Avatar UserId="@((long)Friend.Id)" ShowStatus="@false" />
 
 	@if (IsOwner)
@@ -15,7 +15,7 @@
 		<div class="crown">👑</div>
 	}
 
-	@* What they're up to, at a glance - download progress, ready, in the game, stuck *@
+	@* What they're up to, at a glance - download progress, in the game, stuck *@
 	@if ( Badge is { } badge )
 	{
 		<div class="status-badge @StatusClass @(Status is { Stage: PartyRoom.JoinStage.Downloading, Progress: not null } ? "percent" : "")">
@@ -40,14 +40,9 @@
 	/// </summary>
 	public PartyRoom.MemberStatus Status { get; set; }
 
-	/// <summary>
-	/// Whether this member is ready to start the party's selected game.
-	/// </summary>
-	public bool Ready { get; set; }
-
 	string Name => Friend.IsMe ? Language.GetPhrase( "menu.friends.you" ) : Friend.Name;
 
-	string Badge => Ready ? "check" : Status.Stage switch
+	string Badge => Status.Stage switch
 	{
 		PartyRoom.JoinStage.Downloading => "download",
 		PartyRoom.JoinStage.WaitingForHost => "check",
@@ -57,7 +52,7 @@
 		_ => null
 	};
 
-	string StatusClass => Ready ? "ready" : Status.Stage switch
+	string StatusClass => Status.Stage switch
 	{
 		PartyRoom.JoinStage.Downloading or PartyRoom.JoinStage.Connecting => "busy",
 		PartyRoom.JoinStage.WaitingForHost or PartyRoom.JoinStage.Connected => "ready",
@@ -65,7 +60,7 @@
 		_ => ""
 	};
 
-	string StatusTooltip => Ready ? $"{Name} - ready to start" : Status.Stage switch
+	string StatusTooltip => Status.Stage switch
 	{
 		PartyRoom.JoinStage.Downloading when Status.Progress is { } p => $"{Name} - downloading, {p * 100:0}%",
 		PartyRoom.JoinStage.Downloading => $"{Name} - downloading",
@@ -80,7 +75,7 @@
 
 	public bool IsTalking => PartyView.IsMemberTalking( Friend );
 
-	protected override int BuildHash() => System.HashCode.Combine( IsOwner, IsTalking, Status, Ready );
+	protected override int BuildHash() => System.HashCode.Combine( IsOwner, IsTalking, Status );
 
 	//
 	// A bounce when their status changes - finished downloading, joined, fell over - so your eye
@@ -96,8 +91,28 @@
 	float _pop, _popVelocity;
 	bool _popping;
 
+	float _voice;
+
+	/// <summary>
+	/// How loud they are, eased - quick up, slower down, so it breathes with what they say rather than flickering - and
+	/// the face's glow in three steps of it (.voice-1 to .voice-3)
+	/// </summary>
+	void TickVoice()
+	{
+		var target = Math.Clamp( PartyView.MemberVoiceLevel( Friend ) * 2.5f, 0f, 1f );
+		var rate = target > _voice ? 18f : 6f;
+		_voice = MathX.Lerp( _voice, target, 1 - MathF.Exp( -RealTime.Delta * rate ) );
+
+		var step = _voice < 0.05f ? 0 : _voice < 0.35f ? 1 : _voice < 0.7f ? 2 : 3;
+		SetClass( "voice-1", step == 1 );
+		SetClass( "voice-2", step == 2 );
+		SetClass( "voice-3", step == 3 );
+	}
+
 	public override void Tick()
 	{
+		TickVoice();
+
 		// The first status we see is just where they are - only changes after that bounce
 		if ( !_seenStage )
 		{

@@ -6,17 +6,20 @@ public enum TileJobStatus { Pending, Built, Unchanged, Failed, NeedsGeometry }
 
 /// <summary>
 /// Everything needed to build one tile. Taken from the mesh, built on any thread, committed back.
-/// The job holds copies of what it needs from the mesh, so the owner may go on changing the mesh
-/// while it is built: the result is committed as it is and the tile gets another job for the rest.
-/// When NeedsGeometry is set the engine collects the triangles inside the job's box, from whatever it
-/// keeps them in, and hands them over with SetGeometry before the job is built.
+/// The job holds copies of what it needs, so the owner may change the mesh meanwhile; the tile gets
+/// another job for the rest. When NeedsGeometry is set, hand over the triangles inside the job's box
+/// with SetGeometry before building.
 /// </summary>
 public sealed partial class TileJob
 {
-	// Jobs come from NavMesh.TakeJobs
 	internal TileJob()
 	{
 	}
+
+	/// <summary>
+	/// The agent type the job builds a tile of. X, Y and the bounds are in that type's tile grid.
+	/// </summary>
+	public int AgentType => Owner!.Index;
 
 	public int X { get; internal set; }
 	public int Y { get; internal set; }
@@ -46,7 +49,7 @@ public sealed partial class TileJob
 	/// </summary>
 	public string? Error { get; internal set; }
 
-	internal NavMesh? Mesh;
+	internal MeshAgentType? Owner;
 
 	// The triangles changed since the tile was last built, so what the mesh kept cannot serve.
 	internal bool GeometryChanged;
@@ -60,10 +63,9 @@ public sealed partial class TileJob
 
 	/// <summary>
 	/// The triangles of the tile, three indices each. A triangle is ground when the cross product of
-	/// v1 - v0 and v2 - v0 points up, within the slope limit, and an obstacle either way. Triangles
-	/// outside the job's box do no harm. The memory is read while the job is built and not kept.
-	/// An empty set says there is nothing here: the job builds to an empty tile, and committing it
-	/// removes the tile. A job that needs geometry and is built without this call fails.
+	/// v1 - v0 and v2 - v0 points up, within the slope limit, and an obstacle either way. Triangles outside
+	/// the box do no harm. The memory is read while the job is built and not kept. An empty set builds an
+	/// empty tile, which removes the tile. A job that needs geometry and is built without this call fails.
 	/// </summary>
 	public void SetGeometry( ReadOnlyMemory<Vector3> vertices, ReadOnlyMemory<int> indices )
 	{

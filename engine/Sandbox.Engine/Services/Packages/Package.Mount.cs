@@ -1,5 +1,4 @@
-﻿using Sandbox.Engine;
-using Sentry;
+﻿using Sentry;
 
 namespace Sandbox;
 
@@ -14,30 +13,29 @@ public partial class Package
 	}
 
 	/// <summary>
-	/// Mounts the package files and optionally loads its assemblies into the current game.
+	/// Mounts the package's content files for the current game.
 	/// </summary>
-	public async Task<BaseFileSystem> MountAsync( bool withCode = false )
+	public async Task<BaseFileSystem> MountAsync()
 	{
 		var source = GetMountSource() ?? await FetchAsync( FullIdent, false );
-		return source is null ? null : await source.MountResolvedAsync( withCode );
+		if ( source is null || source.IsRemoteMap ) return null;
+
+		SentrySdk.AddBreadcrumb( $"Mounting {source.FullIdent}", "package.mount" );
+
+		return await ServerPackages.DownloadAndMount( source.GetVersionedIdent() );
 	}
 
 	/// <summary>
-	/// Mounts the selected source. Callers that release a mount retain this package as its owner.
+	/// Mounts the package's content files. The <paramref name="withCode"/> argument is ignored.
 	/// </summary>
-	internal async Task<BaseFileSystem> MountResolvedAsync( bool withCode = false )
-	{
-		SentrySdk.AddBreadcrumb( $"Mounting {FullIdent}", "package.mount" );
+	[Obsolete( "Use MountAsync(). Mounting a package only loads its content." )]
+	public Task<BaseFileSystem> MountAsync( bool withCode ) => MountAsync();
 
-		if ( IsWorkshopMap )
-			return await MountWorkshopMapAsync();
-
-		var fs = await ServerPackages.DownloadAndMount( GetVersionedIdent() );
-		if ( fs is not null && withCode && IGameInstanceDll.Current is { } game )
-			await game.LoadPackageAssembliesAsync( this );
-
-		return fs;
-	}
+	/// <summary>
+	/// Fraction of this revision's content bytes downloaded while mounting it in the current game.
+	/// Returns null when the transfer has no byte progress to report.
+	/// </summary>
+	public float? DownloadFraction => ServerPackages.Get( GetVersionedIdent() ) is { IsDownloading: true } mount ? mount.DownloadFraction : null;
 
 	/// <summary>
 	/// Check if the package is installed and mounted
@@ -46,8 +44,6 @@ public partial class Package
 	{
 		var source = GetMountSource();
 		if ( source is null ) return false;
-		if ( source.IsWorkshopMap )
-			return WorkshopItems.Current?.IsMounted( source.WorkshopId ) == true;
 
 		var download = ServerPackages.Get( source.GetVersionedIdent() ) ?? ServerPackages.Get( source.FullIdent );
 		if ( download is not { IsMounted: true, activePackage.FileSystem: not null } ) return false;

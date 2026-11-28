@@ -5,8 +5,8 @@ namespace Sandbox.Engine;
 
 internal sealed partial class GameWindow
 {
-	static readonly Superluminal gameRender = new( "Game Render", "#3a6e4d" );
-	static readonly Superluminal menuRender = new( "Menu Render", "#6e3a6e" );
+	static readonly ProfileScope gameRender = new( "Game.Render" );
+	static readonly ProfileScope menuRender = new( "Menu.Render" );
 
 	// Scene views derive their dimensions and MSAA from this swapchain; scratch textures are pooled on demand.
 	internal void InitializeRendering()
@@ -32,6 +32,11 @@ internal sealed partial class GameWindow
 				IGameInstanceDll.Current?.OnRender( window.SwapChain );
 			using ( menuRender.Start() )
 				IMenuDll.Current?.OnRender( window.SwapChain );
+
+			// The menu adds the overlay: its UI, the loading screen, debug overlays and screen capture. An exported game
+			// has no menu, but still needs the rest.
+			if ( IMenuDll.Current is null )
+				CCameraRenderer.RenderOverlay( window.SwapChain );
 		}
 		finally
 		{

@@ -15,6 +15,11 @@ public sealed partial class DuplicatorTool : ToolMode
 	[Sync( SyncFlags.FromHost ), Change( nameof( JsonChanged ) )]
 	public string CopiedJson { get; set; }
 
+	/// <summary>
+	/// Breaks ties between identical local saves in favor of the entry last loaded or saved.
+	/// </summary>
+	internal string PreferredDupeId { get; private set; }
+
 	DuplicatorSpawner spawner;
 	LinkedGameObjectBuilder builder = new() { RejectPlayers = true };
 
@@ -135,11 +140,11 @@ public sealed partial class DuplicatorTool : ToolMode
 		storage.SetMeta( "packages", packages.Select( x => x.FullIdent ) );
 		storage.Files.WriteAllText( "/dupe.json", data );
 
-		var bitmap = new Bitmap( 1024, 1024 );
+		using var bitmap = SandboxWorkshop.CreatePreview();
 		RenderIconToBitmap( data, bitmap );
 
-		var downscaled = bitmap.Resize( 512, 512 );
-		storage.SetThumbnail( downscaled );
+		storage.SetThumbnail( bitmap );
+		PreferredDupeId = storage.Id;
 	}
 
 	[Rpc.Host]
@@ -305,6 +310,7 @@ public sealed partial class DuplicatorTool : ToolMode
 		if ( toolmode is null ) return;
 
 		var json = item.Files.ReadAllText( "/dupe.json" );
+		toolmode.PreferredDupeId = item.Id;
 		toolmode.Load( json );
 	}
 

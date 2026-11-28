@@ -7,6 +7,18 @@ namespace ServicesTests;
 public class WorkshopPackageTest
 {
 	/// <summary>
+	/// A main preview returned by handle alone counts as existing Workshop artwork during publishing.
+	/// </summary>
+	[TestMethod]
+	public void PreviewHandleWithoutUrlCountsAsExistingArtwork()
+	{
+		var item = new Workshop.Item { Id = 123, PreviewHandle = 456 };
+
+		Assert.AreEqual( "workshop://123/thumb", item.Thumbnail );
+		Assert.IsTrue( item.HasImages );
+	}
+
+	/// <summary>
 	/// Steam supplies addon identity; publisher-supplied package names and item IDs cannot redirect a download.
 	/// </summary>
 	[TestMethod]
@@ -121,12 +133,26 @@ public class WorkshopPackageTest
 		Assert.IsFalse( clothing.InstallsFromWorkshop );
 	}
 
+	/// <summary>
+	/// Remote map packages cannot be mounted or installed, including packages that advertise a Workshop ID.
+	/// </summary>
 	[TestMethod]
-	public void MapWithWorkshopIdInstallsFromWorkshop()
+	[DataRow( 0 )]
+	[DataRow( 1234 )]
+	public async System.Threading.Tasks.Task MapPackageCannotInstall( int workshopId )
 	{
-		var map = new RemotePackage { TypeName = "map", Version = new PackageRevision { Meta = "{\"WorkshopId\":1234}" } };
+		var map = new RemotePackage
+		{
+			Org = new Package.Organization { Ident = "test" },
+			Ident = "remote-map",
+			TypeName = "map",
+			Version = new PackageRevision { Meta = Json.Serialize( new { WorkshopId = workshopId } ) }
+		};
 
-		Assert.IsTrue( map.InstallsFromWorkshop );
+		Assert.IsFalse( map.InstallsFromWorkshop );
+		Assert.IsNull( await map.MountAsync() );
+		await Assert.ThrowsExceptionAsync<System.InvalidOperationException>( () => PackageManager.InstallAsync(
+			new PackageLoadOptions { Package = map, PackageIdent = map.FullIdent } ) );
 	}
 
 	[TestMethod]

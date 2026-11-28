@@ -104,6 +104,39 @@ public sealed class LightProbeVolume : Component, Component.ExecuteInEditor, Com
 		}
 	}
 
+	/// <summary>
+	/// When probes are packed into a shared atlas texture, this is the fraction of the texture's
+	/// depth that belongs to this volume. Default 1 = the volume owns the entire texture.
+	/// </summary>
+	[Property, Hide]
+	public float AtlasZScale
+	{
+		get;
+		set
+		{
+			value = Math.Max( value, float.Epsilon );
+			if ( field == value ) return;
+			field = value;
+			if ( Active ) Rebuild();
+		}
+	} = 1.0f;
+
+	/// <summary>
+	/// When probes are packed into a shared atlas texture, this is the offset into the texture's
+	/// depth where this volume's data starts. Default 0 = the volume starts at the beginning.
+	/// </summary>
+	[Property, Hide]
+	public float AtlasZOffset
+	{
+		get;
+		set
+		{
+			if ( field == value ) return;
+			field = value;
+			if ( Active ) Rebuild();
+		}
+	}
+
 	SceneLightProbe sceneObject;
 
 	protected override void OnEnabled()
@@ -119,7 +152,7 @@ public sealed class LightProbeVolume : Component, Component.ExecuteInEditor, Com
 		sceneObject = null;
 	}
 
-	void Rebuild()
+	internal void Rebuild()
 	{
 		// Probe constants include world-to-texture placement. Recreating also invalidates the
 		// managed renderer's cached attributes and volume selections.
@@ -127,7 +160,7 @@ public sealed class LightProbeVolume : Component, Component.ExecuteInEditor, Com
 		sceneObject = null;
 
 		// A texture that failed to load would give black ambient lighting instead of none.
-		if ( Texture is null || Texture.IsError ) return;
+		if ( Texture is null || Texture.IsError || Scene.Lightmap?.PreviewEnabled == false ) return;
 
 		var size = Bounds.Size;
 		if ( !Bounds.Mins.IsFinite || !Bounds.Maxs.IsFinite || size.x <= 0 || size.y <= 0 || size.z <= 0 )
@@ -137,7 +170,7 @@ public sealed class LightProbeVolume : Component, Component.ExecuteInEditor, Com
 		}
 
 		sceneObject = new SceneLightProbe( Scene.SceneWorld, Texture, IndicesTexture, ScalarsTexture,
-			Bounds, WorldTransform.WithScale( 1 ), Handshake, Priority );
+			Bounds, WorldTransform.WithScale( 1 ), Handshake, Priority, AtlasZScale, AtlasZOffset );
 		sceneObject.Component = this;
 		sceneObject.Tags.SetFrom( Tags );
 	}

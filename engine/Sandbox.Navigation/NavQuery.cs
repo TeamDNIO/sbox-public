@@ -1,5 +1,4 @@
 using System.Numerics;
-using System.Runtime.CompilerServices;
 
 namespace Nav;
 
@@ -10,13 +9,28 @@ namespace Nav;
 /// </summary>
 public sealed partial class NavQuery
 {
-	readonly NavMesh mesh;
+	readonly MeshAgentType mesh;
 	readonly float tileWorld, climb;
 
 	// Lengths: epsilon is a tenth of a unit at a cell of 4. Area-like terms scale with the cell squared.
 	readonly float epsilon, areaScale;
 
-	public NavQuery( NavMesh mesh )
+	/// <summary>
+	/// A query of a mesh of one agent type. Throws for a mesh of several: name the type.
+	/// </summary>
+	public NavQuery( NavMesh mesh ) : this( mesh.Single )
+	{
+	}
+
+	/// <summary>
+	/// A query of one agent type of the mesh, for as long as it lives. A PolyRef of another type fails in
+	/// it like a stale one. Throws for a type the mesh does not have.
+	/// </summary>
+	public NavQuery( NavMesh mesh, int agentType ) : this( mesh.TypeAt( agentType ) )
+	{
+	}
+
+	internal NavQuery( MeshAgentType mesh )
 	{
 		this.mesh = mesh;
 		var settings = mesh.Settings;
@@ -25,6 +39,8 @@ public sealed partial class NavQuery
 		epsilon = mesh.Epsilon;
 		areaScale = mesh.AreaScale;
 	}
+
+	public int AgentType => mesh.Index;
 
 	/// <summary>
 	/// The nearest polygon among those whose bounds touch the box. A polygon directly above or below
@@ -91,8 +107,7 @@ public sealed partial class NavQuery
 
 	/// <summary>
 	/// Snaps both points, searches and pulls the corners, all on one mesh state. halfExtents is how far
-	/// off the mesh a point may be and still snap, Z third. NavCrowd uses 2.1 agent radii sideways and
-	/// 1.51 agent heights up and down for where an agent stands, and 16 agent radii for a target.
+	/// off the mesh a point may be and still snap.
 	/// </summary>
 	public PathStatus FindPath( Vector3 start, Vector3 end, Vector3 halfExtents, in NavFilter filter, NavPath path )
 	{
@@ -166,11 +181,8 @@ public sealed partial class NavQuery
 		return PathStatus.Partial;
 	}
 
-	/// <summary>
-	/// The path search on a pinned state, without corners: writes the corridor from the polygon start
-	/// to polygon to of that state, or as near as the mesh allows, and where it ends. For a caller that
-	/// pulls its own corners.
-	/// </summary>
+	// The path search on a pinned state, without corners: the corridor from start to polygon to, or as near
+	// as the mesh allows, and where it ends.
 	internal PathStatus FindCorridor( MeshState s, PolyRef start, Vector3 from, uint to, Vector3 end, in NavFilter filter, ref PolyRef[] corridor, out int count, out Vector3 reached )
 	{
 		count = 0;

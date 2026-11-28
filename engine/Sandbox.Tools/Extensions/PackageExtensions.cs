@@ -9,6 +9,11 @@ namespace Sandbox;
 public static partial class SandboxToolExtensions
 {
 	/// <summary>
+	/// Gets the project backing a local package. Published packages have no local project.
+	/// </summary>
+	public static Project GetLocalProject( this Package package ) => (package as LocalPackage)?.Project;
+
+	/// <summary>
 	/// Mark this package as a favourite
 	/// </summary>
 	public static async Task SetFavouriteAsync( this Package package, bool state )
@@ -122,70 +127,6 @@ public static partial class SandboxToolExtensions
 			catch ( System.Exception e )
 			{
 				Log.Warning( e, $"Uploading '{relativePath}' failed: {e.Message}" );
-				return false;
-			}
-		}
-	}
-
-	/// <summary>
-	/// Upload a video for this package
-	/// </summary>
-	public static async Task<bool> UploadVideo( this Asset asset, byte[] contents, bool isThumbVideo, bool hidden = false, string tag = null, Sandbox.Utility.DataProgress.Callback progress = null, CancellationToken token = default )
-	{
-		var meta = asset.Publishing;
-		if ( meta == null ) return false;
-		if ( meta.ProjectConfig == null ) return false;
-		if ( meta.ProjectConfig.FullIdent == null ) return false;
-
-		int size = contents.Length;
-		var file = Guid.NewGuid().ToString();
-		var endpoint = await AccountInformation.GetUploadEndPointAsync( file );
-
-		using ( var stream = new MemoryStream( contents ) )
-		{
-			var upload = new VideoUploadRequest();
-
-			upload.Package = meta.ProjectConfig.FullIdent;
-			upload.Thumb = isThumbVideo;
-			upload.Hidden = hidden;
-			upload.Tag = tag;
-
-			if ( size > 1024 * 1024 * 2 )
-			{
-				if ( !await EditorUtility.PutAsync( stream, endpoint, progress, token ) )
-				{
-					Log.Warning( $"File upload failed" );
-					return false;
-				}
-
-				upload.File = file;
-
-				// make the progress report additive to this size, so it doesn't go back to 0 bytes
-				var op = progress;
-				progress = p =>
-				{
-					op?.Invoke( new DataProgress { TotalBytes = size + p.TotalBytes, ProgressBytes = size + p.ProgressBytes } );
-				};
-			}
-			else
-			{
-				upload.File = Convert.ToBase64String( contents );
-			}
-
-			try
-			{
-				var r = await Backend.Package.UploadVideo( upload );
-
-				if ( r.Status != "OK" )
-				{
-					Log.Warning( $"Uploading video failed: {r}" );
-				}
-
-				return r.Status == "OK";
-			}
-			catch ( System.Exception e )
-			{
-				Log.Warning( e, $"Uploading video failed: {e.Message}" );
 				return false;
 			}
 		}

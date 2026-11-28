@@ -8,14 +8,14 @@ internal static partial class InputRouter
 {
 	static RealTimeSince timeSinceWindowActive;
 
-	internal static void OnMouseButton( ButtonCode button, bool down )
+	internal static void OnMouseButton( ButtonCode button, bool down, int clicks = 1 )
 	{
 		SetButtonState( button, down );
 
 		var modifiers = GetCurrentModifiers();
 
 		// Dev tools docked in the window take the clicks on them, and the release of a click that started there
-		if ( DevTools.GameDockMouseButton( button, down, MouseCursorPosition, modifiers ) )
+		if ( DevTools.GameDockMouseButton( button, down, clicks, MouseCursorPosition, modifiers ) )
 			return;
 
 		var mouse = MouseTarget();
@@ -193,19 +193,13 @@ internal static partial class InputRouter
 
 		foreach ( var action in Sandbox.Input.InputActions.Where( x => x.GamepadCode != GamepadCode.None && x.GamepadCode == code ) )
 		{
-			var i = Sandbox.Input.GetActionIndex( action );
-
 			if ( controller?.InputContext is not { } controllerContext )
 				continue;
 
+			var mask = 1UL << Sandbox.Input.GetActionIndex( action );
+			controllerContext.AccumulateAction( mask, down );
 			if ( down )
-			{
-				controllerContext.AccumActionsPressed |= 1UL << i;
-			}
-			else
-			{
-				controllerContext.AccumActionsReleased |= 1UL << i;
-			}
+				controllerContext.PendingNetworkActions |= mask;
 		}
 	}
 

@@ -60,13 +60,7 @@ public partial class PackageLoaderTest
 
 		Assert.AreEqual( 0, PackageManager.MountedFileSystem.FileCount, "No package files mounted" );
 
-		var downloadOptions = new PackageLoadOptions
-		{
-			PackageIdent = packageName,
-			ContextTag = "client",
-			SkipAssetDownload = true
-		};
-		var p = await PackageManager.InstallAsync( downloadOptions );
+		var p = await PackageManager.InstallAsync( new PackageLoadOptions( packageName, "client" ) );
 		Assert.IsNotNull( p, "Package should not be null" );
 
 		Assert.AreNotEqual( 0, PackageManager.MountedFileSystem.FileCount, "We have package files mounted" );
@@ -117,6 +111,32 @@ public partial class PackageLoaderTest
 
 		PackageManager.UnmountAll();
 		Assert.AreEqual( 0, PackageManager.MountedFileSystem.FileCount );
+	}
+
+	/// <summary>
+	/// A disposed loader unloads the contexts its package assemblies were loaded into, not only its own: a collectible
+	/// context holds itself until it's told to unload, so each closed game's assemblies, statics and last scene stayed.
+	/// </summary>
+	[TestMethod]
+	public async Task DisposedLoaderUnloadsItsPackageAssemblies()
+	{
+		var (library, packageLoader, enroller) = Preamble();
+		var project = Project.AddFromFile( "unittest/addons/spacewars" );
+		await CompileProjects();
+		enroller.LoadPackage( project.Package.FullIdent );
+
+		var gameClass = library.GetType( "SpaceWarsGameManager" );
+		Assert.IsNotNull( gameClass, "Found game class" );
+		var context = System.Runtime.Loader.AssemblyLoadContext.GetLoadContext( gameClass.TargetType.Assembly );
+		Assert.IsInstanceOfType<IsolatedAssemblyContext>( context );
+		var state = typeof( System.Runtime.Loader.AssemblyLoadContext ).GetField( "_state", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance );
+		Assert.AreEqual( "Alive", state.GetValue( context ).ToString() );
+
+		enroller.Dispose();
+		packageLoader.Dispose();
+		PackageManager.UnmountAll();
+
+		Assert.AreEqual( "Unloading", state.GetValue( context ).ToString(), "the game's assembly context unloads with its loader" );
 	}
 
 	/// <summary>

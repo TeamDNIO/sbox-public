@@ -4,7 +4,7 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 namespace Nav.Lib.Tests.Docs;
 
 /// <summary>
-/// The four examples of the library's README.md, compiled and run. The example code is kept as the README has
+/// The examples of the library's README.md, compiled and run. The example code is kept as the README has
 /// it; what is added around it are the checks. Change one, change the other.
 /// </summary>
 [TestClass]
@@ -245,7 +245,7 @@ public class ReadmeExamples
 		// Only builds from triangles add to the triangle counter
 		long triangles = mesh.GetStats().TrianglesUsed;
 
-		// A crate lands in the way. Area NoArea blocks; Margin keeps agents an agent radius away from it.
+		// A crate lands in the way. Area NoArea blocks; Margin keeps agents an agent radius away from it, as from a wall.
 		int crate = mesh.AddVolume( new NavVolume
 		{
 			Shape = VolumeShape.Box,
@@ -285,7 +285,7 @@ public class ReadmeExamples
 
 		// The player: the game moves it, the crowd plans its route and makes others avoid it.
 		var player = AgentParams.Create( new AgentDesc { Radius = 0.4f, Height = 1.8f, MaxSpeed = 5, Acceleration = 20 } );
-		player.External = true;
+		player.Mode = AgentMode.Planned;
 		var position = new Vector3( 5, 5, 0 );
 		int id = crowd.Add( position, player );
 		uint generation = crowd.States[id].Generation;
@@ -330,5 +330,42 @@ public class ReadmeExamples
 			Assert.IsTrue( Vector2.Distance( new( state.Position.X, state.Position.Y ), goal ) < player.Radius, $"agent {i} at {state.Position}" );
 		}
 		Assert.AreEqual( position, crowd.States[id].Position, "An External agent stays where the game put it" );
+	}
+
+	[TestMethod]
+	public void PeopleAndCars()
+	{
+		// The level of the first example, for people and for cars.
+		var people = NavSettings.Create( new NavSettingsDesc { AgentHeight = 1.8f, AgentRadius = 0.4f, AgentClimb = 0.4f, AgentMaxSlope = 45, CellSize = 0.1f, CellHeight = 0.1f, TileSize = 256 } );
+		var cars = NavSettings.Create( new NavSettingsDesc { AgentHeight = 2, AgentRadius = 1.5f, AgentClimb = 0.2f, AgentMaxSlope = 15, CellSize = 0.25f, CellHeight = 0.1f, TileSize = 128 } );
+		var mesh = new NavMesh( [
+			new NavAgentTypeDesc { Settings = people, Options = NavMeshOptions.Create( people ) },
+			new NavAgentTypeDesc { Settings = cars, Options = NavMeshOptions.Create( cars ) },
+		] );
+		var failures = new List<(int AgentType, int X, int Y, string Error)>();
+		mesh.Build( new NavBuilder(), vertices, indices, failures );
+
+		// A query, and an agent, name their type: 0 for people, 1 for cars.
+		var carQuery = new NavQuery( mesh, 1 );
+		var path = new NavPath();
+		var carBox = new Vector3( 2.1f * cars.AgentRadius, 2.1f * cars.AgentRadius, 1.51f * cars.AgentHeight );
+		var status = carQuery.FindPath( new Vector3( 5, 5, 0 ), new Vector3( 45, 5, 0 ), carBox, NavFilter.Create(), path );
+
+		var crowd = new NavCrowd( mesh, workers: Environment.ProcessorCount );
+		var car = AgentParams.Create( new AgentDesc { Radius = 1.5f, Height = 2, MaxSpeed = 8, Acceleration = 6 } ) with { AgentType = 1 };
+		int id = crowd.Add( new Vector3( 5, 5, 0 ), car );
+		crowd.MoveTo( id, new Vector3( 45, 5, 0 ) );
+
+		Assert.AreEqual( 0, failures.Count );
+		Assert.AreEqual( PathStatus.Complete, status );
+		// Round the end of the wall, a car's radius clear of it: the wall runs along x 25 from y 0 to 20.
+		static float FromWall( Vector3 c ) => Vector2.Distance( new( c.X, c.Y ), new( 25, Math.Clamp( c.Y, 0, 20 ) ) );
+		Assert.IsTrue( path.Corners.ToArray().All( c => FromWall( c ) >= cars.AgentRadius - cars.CellSize ), string.Join( " ", path.Corners.ToArray() ) );
+		var walk = new NavPath();
+		Assert.AreEqual( PathStatus.Complete, FindPath( BuildLevel(), walk ) );
+		Assert.IsTrue( path.Length > walk.Length );
+		for ( int frame = 0; frame < 60 * 30 && crowd.States[id].Status != AgentStatus.Arrived; frame++ ) crowd.Step( 1 / 60f );
+		Assert.AreEqual( AgentStatus.Arrived, crowd.States[id].Status );
+		Assert.ThrowsException<InvalidOperationException>( () => new NavQuery( mesh ) );
 	}
 }

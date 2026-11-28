@@ -1,6 +1,5 @@
 using System.Buffers;
 using System.Numerics;
-using System.Reflection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace Nav.Lib.Tests;
@@ -9,16 +8,13 @@ namespace Nav.Lib.Tests;
 /// The split of a polygon id into tile slot and polygon, chosen per mesh by NavSettings.MaxTilePolygons.
 /// </summary>
 [TestClass]
-public class SplitTests
+public partial class SplitTests
 {
 	static NavSettings Limited( int polygons ) => GridMesh.Settings with { MaxTilePolygons = polygons };
 
 	static NavMesh Mesh( in NavSettings settings ) => new( settings, NavMeshOptions.Create( settings ) );
 
 	static NavMesh? Load( byte[] data ) => NavMesh.TryReadSettings( data, out var settings ) ? NavMesh.Load( data, NavMeshOptions.Create( settings ) ) : null;
-
-	// The next new tile goes into this slot, as if the ones below were taken.
-	static void SkipSlots( NavMesh mesh, int slot ) => typeof( NavMesh ).GetField( "slotCount", BindingFlags.NonPublic | BindingFlags.Instance )!.SetValue( mesh, slot );
 
 	[TestMethod]
 	public void SboxSettingsKeepTodaysLimits()
@@ -72,6 +68,8 @@ public class SplitTests
 	[TestMethod]
 	public void IdsRoundTripAtTheExtremesOfEverySplit()
 	{
+		Assert.AreEqual( 65535, PolyRef.MaxLinks );
+		Assert.IsTrue( default( PolyRef ).IsNone && !default( PolyRef ).IsLink );
 		for ( int bits = 1; bits <= 16; bits++ )
 		{
 			uint mask = (1u << bits) - 1;
@@ -84,7 +82,7 @@ public class SplitTests
 				foreach ( uint poly in new[] { 0u, mask - 1, mask } )
 				{
 					var reference = new PolyRef( uint.MaxValue, slot << bits | poly );
-					Assert.IsFalse( reference.IsLink, $"bits {bits} slot {slot} poly {poly}" );
+					Assert.IsFalse( reference.IsNone || reference.IsLink, $"bits {bits} slot {slot} poly {poly}" );
 					Assert.AreEqual( -1, reference.Link );
 					Assert.AreEqual( slot, reference.Id >> bits );
 					Assert.AreEqual( poly, reference.Id & mask );
@@ -97,6 +95,7 @@ public class SplitTests
 				var reference = PolyRef.ForLink( 5, link );
 				Assert.IsTrue( reference.IsLink );
 				Assert.AreEqual( link, reference.Link );
+				Assert.AreNotEqual( PolyRef.NoId, reference.Id );
 				Assert.IsTrue( reference.Id >> bits >= (uint)maxTiles, "A link id is no tile slot" );
 			}
 		}
@@ -133,7 +132,7 @@ public class SplitTests
 	{
 		var mesh = Mesh( Limited( limit ) );
 		int last = mesh.MaxTiles - 1;
-		SkipSlots( mesh, last );
+		mesh.SkipSlots( last );
 		Assert.AreEqual( 0, mesh.CommitTiles( [Floors( 0, 0, limit )] ) );
 		var s = mesh.State;
 		var tile = s.Find( 0, 0 )!;
@@ -180,9 +179,8 @@ public class SplitTests
 		Assert.AreEqual( topRef.Id, path.Polys[^1].Id, "Same slot and polygon, new serial" );
 		Assert.IsTrue( query.IsValid( path.Polys[^1], Filters.All ) );
 
-		// One polygon more does not build under this limit.
-		Assert.IsNull( new TileAssembler().Create( 0, 0, tile.Verts, new Poly[limit + 1], Limited( limit ), out var error ) );
-		StringAssert.Contains( error, $"the limit is {limit}" );
+		// One polygon more does not build under this limit. SplitTests.Internals.cs has what the message says.
+		Assert.IsNull( new TileAssembler().Create( 0, 0, tile.Verts, new Poly[limit + 1], Limited( limit ), out _ ) );
 	}
 
 	[TestMethod]
@@ -190,7 +188,7 @@ public class SplitTests
 	{
 		var mesh = Mesh( Limited( 255 ) );
 		Assert.AreEqual( 16776960, mesh.MaxTiles );
-		SkipSlots( mesh, 262139 );
+		mesh.SkipSlots( 262139 );
 		Assert.AreEqual( 0, mesh.CommitTiles( [GridMesh.Quad( 0, 0 ), GridMesh.Quad( 1, 0 ), GridMesh.Quad( 2, 0 )] ) );
 		var s = mesh.State;
 		Assert.AreEqual( 262141, s.Find( 2, 0 )!.Slot );
@@ -201,7 +199,7 @@ public class SplitTests
 		Assert.AreEqual( 262141u, path.Polys[^1].Id >> s.PolyBits );
 
 		// The last slot is taken, after it the table is full.
-		SkipSlots( mesh, mesh.MaxTiles - 1 );
+		mesh.SkipSlots( mesh.MaxTiles - 1 );
 		Assert.AreEqual( 1, mesh.CommitTiles( [GridMesh.Quad( 3, 0 ), GridMesh.Quad( 4, 0 )] ) );
 		Assert.AreEqual( mesh.MaxTiles - 1, mesh.State.Find( 3, 0 )!.Slot );
 		Assert.IsNull( mesh.State.Find( 4, 0 ) );
@@ -213,7 +211,7 @@ public class SplitTests
 	{
 		var mesh = Mesh( Limited( 65520 ) );
 		Assert.AreEqual( 65535, mesh.MaxTiles );
-		SkipSlots( mesh, 65534 );
+		mesh.SkipSlots( 65534 );
 		Assert.AreEqual( 0, mesh.CommitTiles( [GridMesh.Quad( 0, 0 )] ) );
 		mesh.MarkDirty( 1, 0 );
 		var jobs = new TileJob[1];

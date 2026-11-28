@@ -1,6 +1,6 @@
 using Sandbox.Services;
 using Sandbox.Services.Players;
-using Steamworks;
+using Sandbox.SteamApi;
 using System.Text.Json.Serialization;
 using System.Threading;
 
@@ -48,6 +48,39 @@ internal static partial class Workshop
 		public string Thumb { get; init; }
 
 		/// <summary>
+		/// Steam Remote Storage handle for the item's main preview image.
+		/// </summary>
+		public ulong PreviewHandle { get; init; }
+
+		/// <summary>
+		/// Texture path used to display the preview in game.
+		/// </summary>
+		internal string Thumbnail => Id is not (0 or ulong.MaxValue) && PreviewHandle is not (0 or ulong.MaxValue)
+			? $"workshop://{Id}/thumb"
+			: string.IsNullOrEmpty( Thumb ) ? null : Thumb;
+
+		/// <summary>
+		/// Whether Steam accepted the item for use in the game.
+		/// </summary>
+		public bool Accepted { get; init; }
+
+		/// <summary>
+		/// Steam Remote Storage handle for the item's primary file.
+		/// </summary>
+		public ulong FileHandle { get; init; }
+
+		/// <summary>
+		/// Filename supplied by Steam for the item's primary file.
+		/// </summary>
+		public string Filename { get; init; }
+
+		/// <summary>
+		/// URL supplied by Steam for items that link to external content.
+		/// </summary>
+		[JsonPropertyName( "Url" )]
+		public string ContentUrl { get; init; }
+
+		/// <summary>
 		/// How many images and videos it has besides its preview image
 		/// </summary>
 		public int AdditionalPreviews { get; init; }
@@ -60,7 +93,7 @@ internal static partial class Workshop
 		/// <summary>
 		/// Does its page have any images - its preview, or others added to it
 		/// </summary>
-		public bool HasImages => !string.IsNullOrEmpty( Thumb ) || AdditionalPreviews > 0;
+		public bool HasImages => Thumbnail is not null || AdditionalPreviews > 0;
 
 		/// <summary>
 		/// Who published it
@@ -111,6 +144,7 @@ internal static partial class Workshop
 		/// <summary>
 		/// Its page on the Steam Workshop
 		/// </summary>
+		[JsonIgnore]
 		public string Url => GetUrl( Id );
 
 		/// <summary>
@@ -274,5 +308,45 @@ internal static partial class Workshop
 	/// <summary>
 	/// An item's page on the Steam Workshop
 	/// </summary>
-	internal static string GetUrl( ulong id ) => $"https://steamcommunity.com/sharedfiles/filedetails/?id={id}";
+	internal static string GetUrl( ulong id ) => FormattableString.Invariant( $"https://steamcommunity.com/sharedfiles/filedetails/?id={id}" );
+
+	internal const int MaxPreviewBytes = 1024 * 1024;
+
+	/// <summary>
+	/// Encodes a Workshop preview as JPEG, lowering quality until it fits Steam's upload limit.
+	/// </summary>
+	internal static byte[] EncodePreviewJpeg( Bitmap bitmap )
+	{
+		using var resized = bitmap.Width > 1920
+			? bitmap.Resize( 1920, Math.Max( 1, (int)(bitmap.Height * (1920f / bitmap.Width)) ) )
+			: null;
+		var preview = resized ?? bitmap;
+
+		for ( var quality = 90; quality >= 40; quality -= 10 )
+		{
+			var jpg = preview.ToJpg( quality );
+			if ( jpg.Length < MaxPreviewBytes ) return jpg;
+		}
+
+		return null;
+	}
+
+	/// <summary>
+	/// Ask the backend which item an ident is linked to. 0 if there isn't one, or we couldn't ask.
+	/// </summary>
+	internal static async Task<ulong> LookupAsync( string ident )
+	{
+		if ( string.IsNullOrWhiteSpace( ident ) ) return 0;
+		if ( Backend.Workshop is null ) return 0;
+
+		try
+		{
+			var result = await Backend.Workshop.Lookup( ident );
+			return result.WorkshopId;
+		}
+		catch ( Exception e ) when ( e is System.Net.Http.HttpRequestException or TaskCanceledException or Refit.ApiException )
+		{
+			return 0;
+		}
+	}
 }

@@ -21,6 +21,21 @@ public static partial class MenuUtility
 	public static bool IsInstalled( ulong workshopId ) => workshopId != 0 && Workshop.GetState( workshopId ).IsInstalled;
 
 	/// <summary>
+	/// Is this Workshop item downloaded here, but older than the Workshop's? By when <paramref name="item"/> says it was
+	/// last updated as well as Steam's own say - Steam often doesn't know there's a newer one. Playing it updates it.
+	/// Asks Steam, so not every frame.
+	/// </summary>
+	public static bool NeedsUpdate( WorkshopItemDetails item )
+	{
+		if ( item is null || item.Id == 0 ) return false;
+
+		var state = Workshop.GetState( item.Id );
+		if ( !state.IsInstalled ) return false;
+
+		return state.NeedsUpdate || item.Updated.ToUnixTimeSeconds() > Workshop.GetInstalledVersion( item.Id );
+	}
+
+	/// <summary>
 	/// Subscribe to this Workshop item, so Steam keeps it installed and up to date
 	/// </summary>
 	public static void Subscribe( ulong workshopId )
@@ -91,7 +106,7 @@ public static partial class MenuUtility
 		var id = await GetWorkshopIdAsync( package );
 		if ( id == 0 ) return false;
 
-		if ( !Steamworks.SteamFriends.OpenWebOverlay( Workshop.GetUrl( id ) ) )
+		if ( !Sandbox.SteamApi.SteamFriends.OpenWebOverlay( Workshop.GetUrl( id ) ) )
 			OpenUrl( $"steam://url/CommunityFilePage/{id}" );
 
 		return true;
@@ -121,7 +136,7 @@ public static partial class MenuUtility
 		var owners = items.Where( x => x?.Owner is not null ).Select( x => (ulong)x.Owner.Id.Value ).Distinct().ToArray();
 
 		RealTimeSince waiting = 0;
-		while ( owners.Count( x => Steamworks.SteamFriends.RequestUserInformation( x ) ) > 0 && waiting < 2 )
+		while ( owners.Count( x => Sandbox.SteamApi.SteamFriends.RequestUserInformation( x ) ) > 0 && waiting < 2 )
 			await Task.Delay( 50 );
 	}
 

@@ -14,29 +14,107 @@ public static partial class Input
 	static IDisposable defaultContextScope;
 
 	/// <summary>
-	/// Get all of the contexts
+	/// Get all of the contexts. A struct: every key and mouse event walks them.
 	/// </summary>
-	internal static IEnumerable<Context> Contexts
+	internal static ContextList Contexts
 	{
 		get
 		{
 			// remove collected
 			contexts.RemoveAll( x => x.TryGetTarget( out _ ) == false );
+			return default;
+		}
+	}
 
-			foreach ( var t in contexts )
+	internal readonly struct ContextList
+	{
+		public Enumerator GetEnumerator() => default;
+
+		public struct Enumerator
+		{
+			int next;
+
+			public Context Current { get; private set; }
+
+			public bool MoveNext()
 			{
-				if ( t.TryGetTarget( out var x ) )
-					yield return x;
+				while ( next < contexts.Count )
+				{
+					if ( !contexts[next++].TryGetTarget( out var context ) ) continue;
+
+					Current = context;
+					return true;
+				}
+
+				return false;
 			}
 		}
 	}
 
+	// Independent of the frame and physics contexts: a tap between network sends must survive until sampled.
+	private static Context NetworkContext;
+	private static ushort[] _lastNetworkKeys;
+
 	static Input()
 	{
+		NetworkContext = Context.Create( "Network" );
+
 		// We should always have a context available
 		// This will just get GC'd on client as we replace it with frame/tick context
 		var d = Context.Create( "Default" );
 		defaultContextScope = d.Push();
+	}
+
+	// Finish the sample and discard pending taps. Held actions carry into the next sample.
+	internal static void ResetNetworkInput()
+	{
+		NetworkContext.Flip();
+		NetworkContext.PendingNetworkActions = 0;
+
+		foreach ( var controller in Controller.All )
+		{
+			controller.InputContext.PendingNetworkActions = 0;
+		}
+	}
+
+	/// <summary>
+	/// Sample input once per outgoing command, preserving short taps for one command.
+	/// </summary>
+	internal static void CaptureNetworkInput( ref UserCommand command )
+	{
+		var actions = Actions | (CurrentController?.InputContext.PendingNetworkActions ?? 0);
+
+		if ( CurrentPlayerScope <= 0 )
+		{
+			actions |= (NetworkContext.AccumActionsPressed & ~CurrentContext.ActionsCleared)
+				| NetworkContext.PendingNetworkActions;
+		}
+
+		ResetNetworkInput();
+
+		if ( Suppressed )
+			return;
+
+		if ( CurrentPlayerScope <= 0 && NetworkContext.KeysCurrent.Count > 0 )
+		{
+			Span<ushort> codes = stackalloc ushort[NetworkContext.KeysCurrent.Count];
+			var i = 0;
+			foreach ( var key in NetworkContext.KeysCurrent )
+				codes[i++] = (ushort)key;
+
+			command.SetKeys( codes, _lastNetworkKeys );
+		}
+
+		_lastNetworkKeys = command.Keys;
+		command.Actions = actions;
+		command.MouseDelta = NetworkContext.MouseDelta;
+		command.MouseWheel = NetworkContext.MouseWheel;
+
+		for ( var i = 0; i < UserCommand.AnalogCount; i++ )
+		{
+			var analog = (InputAnalog)i;
+			command.SetAnalog( analog, GetAnalog( analog ) );
+		}
 	}
 
 	/// <summary>
@@ -78,6 +156,17 @@ public static partial class Input
 		internal Vector2 MouseWheel { get; set; }
 		internal ulong ActionsCurrent { get; set; }
 		internal ulong ActionsPrevious { get; set; }
+
+		/// <summary>
+		/// Actions cleared by game code in this context, overriding physical input for this sample.
+		/// </summary>
+		internal ulong ActionsCleared { get; set; }
+
+		/// <summary>
+		/// Presses retained for the next network sample, independent of this context's update rate.
+		/// </summary>
+		internal ulong PendingNetworkActions { get; set; }
+
 		internal HashSet<ButtonCode> KeysCurrent { get; set; } = new();
 		internal HashSet<ButtonCode> KeysPrevious { get; set; } = new();
 		internal bool MouseCursorVisible { get; set; }
@@ -92,6 +181,19 @@ public static partial class Input
 		Context( string name )
 		{
 			this.Name = name;
+		}
+
+		internal void AccumulateAction( ulong mask, bool down )
+		{
+			if ( down )
+			{
+				AccumActionsPressed |= mask;
+				AccumActionsReleased &= ~mask;
+			}
+			else
+			{
+				AccumActionsReleased |= mask;
+			}
 		}
 
 		/// <summary>
@@ -118,6 +220,7 @@ public static partial class Input
 			// Current actions are all pressed
 			ActionsCurrent = AccumActionsPressed;
 			SavedActions = ActionsCurrent;
+			ActionsCleared = 0;
 
 			// Remove released actions
 			AccumActionsPressed &= ~AccumActionsReleased;
@@ -127,9 +230,10 @@ public static partial class Input
 			if ( ReferenceEquals( recycledKeys, KeysPrevious ) || ReferenceEquals( recycledKeys, KeysCurrent ) )
 				recycledKeys = new();
 
+			// HashSet's own enumerator: UnionWith and ExceptWith take an IEnumerable and box it for every held key's flip
 			recycledKeys.Clear();
-			recycledKeys.UnionWith( AccumKeysPressed );
-			recycledKeys.ExceptWith( AccumKeysReleased );
+			foreach ( var key in AccumKeysPressed ) recycledKeys.Add( key );
+			foreach ( var key in AccumKeysReleased ) recycledKeys.Remove( key );
 			AccumKeysPressed = recycledKeys;
 			AccumKeysReleased.Clear();
 		}

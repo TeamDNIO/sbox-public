@@ -15,6 +15,11 @@ public static class Application
 	internal static bool IsInitialized { get; private set; }
 
 	/// <summary>
+	/// True while AppSystem.Shutdown is tearing down static resource references and native subsystems.
+	/// </summary>
+	internal static bool IsShuttingDown { get; set; }
+
+	/// <summary>
 	/// Steam AppId of S&amp;box.
 	/// </summary>
 	public static ulong AppId { get; internal set; } = 590830;
@@ -150,19 +155,14 @@ public static class Application
 	internal static Package GamePackage { get; set; }
 
 	/// <summary>
-	/// The currently loaded map package
-	/// </summary>
-	internal static Package MapPackage { get; set; }
-
-	/// <summary>
 	/// The currently loaded game package's ident - if applicable.
 	/// </summary>
 	internal static string GameIdent { get; set; }
 
 	/// <summary>
-	/// The currently loaded map, can be an ident or a path.
+	/// The map the running game launched on, or null if it launched without one.
 	/// </summary>
-	internal static string Map { get; set; }
+	internal static MapReference Map { get; set; }
 
 #if DEBUG
 	public static bool IsDebug => true;
@@ -173,14 +173,14 @@ public static class Application
 #endif
 
 	/// <summary>
-	/// Returns true if the microphone is currently listening
+	/// Returns true if the microphone is currently listening, for voice chat or speech recognition
 	/// </summary>
-	public static bool IsMicrophoneListening => VoiceManager.IsListening;
+	public static bool IsMicrophoneListening => VoiceManager.IsListening || Speech.Recognition.IsListening;
 
 	/// <summary>
 	/// Returns true if the microphone is currently listening and actually hearing/capturing sounds
 	/// </summary>
-	public static bool IsMicrophoneRecording => VoiceManager.IsRecording;
+	public static bool IsMicrophoneRecording => VoiceManager.IsRecording || Speech.Recognition.IsHearingSound;
 
 	/// <summary>
 	/// Is the game window in focus?
@@ -203,7 +203,7 @@ public static class Application
 		GameIdent = default;
 		GamePackage = default;
 		ExceptionCount = default;
-		MapPackage = default;
+		ExceptionThrottle.Clear();
 		Map = default;
 
 		// Cheats, and anything they allowed, shouldn't carry over into the next game
@@ -258,9 +258,9 @@ public static class Application
 			Log.Info( $"Game: {game.GetVersionedIdent()} ({game.Revision?.Created})" );
 		}
 
-		if ( MapPackage is { } map )
+		if ( Map is { } map )
 		{
-			Log.Info( $"Map: {map.GetVersionedIdent()} ({map.Revision?.Created})" );
+			Log.Info( $"Map: {map.Title ?? map.Text} ({map.Text})" );
 		}
 	}
 }

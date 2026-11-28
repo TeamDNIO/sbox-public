@@ -36,8 +36,6 @@ public static class PartyView
 	static bool mockPublic;
 	static int mockMaxMembers = PartyDeck.MAX_MEMBERS;
 	static Package mockGame;
-	static CreateGameResults? mockGameSettings;
-	static bool mockReady;
 	static RealTimeSince mockSendVoice;
 
 	/// <summary>
@@ -146,11 +144,6 @@ public static class PartyView
 	internal static string SelectedGameTitle => IsMocking ? mockGame?.Title : Party?.SelectedGameTitle;
 
 	/// <summary>
-	/// The setup shared by the leader for the selected game.
-	/// </summary>
-	internal static CreateGameResults? SelectedGameSettings => IsMocking ? mockGameSettings : Party?.SelectedGameSettings;
-
-	/// <summary>
 	/// Choose the game to play next, or clear the choice with null.
 	/// </summary>
 	internal static void SelectGame( Package package )
@@ -159,11 +152,6 @@ public static class PartyView
 
 		if ( IsMocking )
 		{
-			if ( mockGame?.FullIdent != package?.FullIdent )
-			{
-				mockGameSettings = null;
-				mockReady = false;
-			}
 			mockGame = package;
 		}
 		else
@@ -172,40 +160,21 @@ public static class PartyView
 		}
 	}
 
-	/// <summary>
-	/// Save a setup only while its game is still selected.
-	/// </summary>
-	internal static void ConfigureGame( string gameIdent, CreateGameResults settings )
-	{
-		if ( !Exists || !OwnerIsMe ) return;
-
-		if ( IsMocking )
-		{
-			if ( gameIdent == SelectedGameIdent )
-			{
-				if ( !Platform.GameSetup.SettingsEqual( mockGameSettings, settings ) ) mockReady = false;
-				mockGameSettings = settings;
-			}
-		}
-		else
-		{
-			Party.ConfigureGame( gameIdent, settings );
-		}
-	}
-
 	public static Friend Owner => IsMocking ? MockMembers.FirstOrDefault( x => x.Id == MenuUI.Front.RailPresence.MockPartyOwner, Me ) : Party?.Owner ?? Me;
 
 	public static bool OwnerIsMe => Owner.IsMe;
 
 	/// <summary>
-	/// Whether this member has agreed to start with the current game setup.
+	/// How loud they are right now, 0 to about 1 - what a face's glow grows with. Your own voice isn't played back, so
+	/// talking's a steady level for you.
 	/// </summary>
-	internal static bool IsMemberReady( Friend member )
+	internal static float MemberVoiceLevel( Friend member )
 	{
-		if ( LeaderState != PartyRoom.OwnerJoinState.None ) return false;
-		return IsMocking
-			? member.Id != Owner.Id && (member.IsMe ? mockReady : SelectedGameSettings is not null)
-			: Party?.IsMemberReady( member ) ?? false;
+		if ( !IsMemberTalking( member ) ) return 0f;
+		if ( IsMocking ) return 0.35f + 0.3f * MathF.Abs( MathF.Sin( RealTime.Now * 9f + (member.Id & 0xff) ) );
+
+		var level = Party?.GetMemberVoiceLevel( member ) ?? 0f;
+		return level > 0f ? level : 0.4f;
 	}
 
 	internal static bool IsMemberTalking( Friend member )
@@ -228,23 +197,6 @@ public static class PartyView
 		else
 		{
 			Party?.SetBroadcastVoice();
-		}
-	}
-
-	/// <summary>
-	/// Change the local member's ready vote, including in the party preview.
-	/// </summary>
-	internal static void SetReady( bool ready )
-	{
-		if ( !Exists || OwnerIsMe ) return;
-
-		if ( IsMocking )
-		{
-			mockReady = ready;
-		}
-		else
-		{
-			Party.SetReady( ready );
 		}
 	}
 
@@ -295,8 +247,6 @@ public static class PartyView
 			mockPublic = false;
 			mockMaxMembers = PartyDeck.MAX_MEMBERS;
 			mockGame = null;
-			mockGameSettings = null;
-			mockReady = false;
 			MenuUI.Front.RailPresence.Mock = "off";
 			return;
 		}

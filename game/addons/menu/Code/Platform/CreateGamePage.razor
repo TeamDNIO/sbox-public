@@ -22,6 +22,7 @@
 <root>
 
     <div class="side">
+        <div class="back" onclick=@Back><i>arrow_back</i><label>Back</label></div>
         <label class="heading">Configure</label>
 
         @if ( Setup is not null )
@@ -39,7 +40,7 @@
     </div>
 
     <div class="panel">
-        <PanelHead Title="Start New Game" Icon="sports_esports" Art=@(Pages?.SetupPackage?.Thumb ?? PlatformMenu.Art) Back=@Back />
+        <PanelHead Title="Start New Game" Icon="sports_esports" Art=@(Pages?.SetupPackage?.Thumb ?? PlatformMenu.Art) />
 
         <div class="body">
 
@@ -187,6 +188,9 @@
     {
         base.Tick();
 
+        // The slots follow the party - no fewer than are in it
+        Setup?.FitParty();
+
         // The map's picture comes in once it's looked up
         if ( MapTile.IsValid() && MapTile.Style.BackgroundImage != Setup?.MapThumb )
             MapTile.Style.BackgroundImage = Setup?.MapThumb;
@@ -264,8 +268,7 @@
 
             if ( !IsValid || mine != request ) return;
 
-            var shared = PartyView.IsGameSelected( full ) ? PartyView.SelectedGameSettings : null;
-            var settings = Pages?.SetupSettings ?? shared ?? GameSetup.GetInitialSettings( full, PartyView.Exists ? PartyView.MaxMembers : 0 );
+            var settings = Pages?.SetupSettings ?? GameSetup.GetInitialSettings( full, PartyView.Exists ? PartyView.MaxMembers : 0 );
 
             download = null;
             Setup = new GameSetup( full, settings );
@@ -301,7 +304,7 @@
                 return;
             }
 
-            await MenuHelpers.StartConfiguredGame( Setup.Package, Setup.Finish(), PartyRoom.Current );
+            await MenuHelpers.StartConfiguredGame( Setup.Package, Setup.Finish() );
         }
         catch ( Exception e )
         {
@@ -313,6 +316,17 @@
             busy = false;
             if ( IsValid ) StateHasChanged();
         }
+    }
+
+    /// <summary>
+    /// The picked map couldn't be loaded, so the setup goes back to the game's default.
+    /// </summary>
+    [Event( "game.mapfailed" )]
+    void OnMapFailed( string ident, string map )
+    {
+        if ( Setup is null || Setup.Package.FullIdent != ident || Setup.Map != map ) return;
+
+        Setup.Map = Setup.Package.Info.DefaultMap;
     }
 
     void Back() => FrontPages.Of( this )?.Leave();
